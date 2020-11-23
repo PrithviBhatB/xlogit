@@ -3,10 +3,13 @@ Implements multinomial and mixed logit models
 """
 # pylint: disable=invalid-name
 
+from math import e
 import numpy as np
+from numpy.core.fromnumeric import var
 from scipy.stats import t
 from time import time
 from abc import ABC, abstractmethod
+from .boxcox_functions import boxcox_transformation, boxcox_param_deriv
 
 
 class ChoiceModel(ABC):
@@ -25,6 +28,9 @@ class ChoiceModel(ABC):
         self.zvalues = None
         self.pvalues = None
         self.loglikelihood = None
+        self.initialData = None
+        self.numFixedCoeffs = None
+        self.numTransformedCoeffs = None
 
     def _reset_attributes(self):
         self.coeff_names = None
@@ -33,33 +39,45 @@ class ChoiceModel(ABC):
         self.zvalues = None
         self.pvalues = None
         self.loglikelihood = None
+        self.initialData = None
+        self.numFixedCoeffs = None
+        self.numTransformedCoeffs = None
 
     @abstractmethod
-    def fit(self, X, y, varnames=None, alt=None, isvars=None, id=None,
+    def fit(self, X, y, varnames=None, alt=None, isvars=None, transvars=None,
+            transformation=None, id=None,
             weights=None, base_alt=None, fit_intercept=False, init_coeff=None,
             maxiter=2000, random_state=None):
         pass
 
-    def _as_array(self, X, y, varnames, alt, isvars, id, weights, panel):
+    def _as_array(self, X, y, varnames, alt, isvars, transvars, id, weights, panel):
         X = np.asarray(X)
         y = np.asarray(y)
+        initialData = X
         varnames = np.asarray(varnames) if varnames is not None else None
         alt = np.asarray(alt) if alt is not None else None
         isvars = np.asarray(isvars) if isvars is not None else None
+        transvars = np.asarray(transvars) if transvars is not None else None
         id = np.asarray(id) if id is not None else None
         weights = np.asarray(weights) if weights is not None else None
         panel = np.asarray(panel) if panel is not None else None
-        return X, y, varnames, alt, isvars, id, weights, panel
+        return X, y, initialData, varnames, alt, isvars, transvars, id, weights, panel
 
-    def _pre_fit(self, alt, varnames, isvars, base_alt,
-                 fit_intercept, maxiter):
+    def _pre_fit(self, alt, varnames, isvars, transvars, base_alt,
+                 fit_intercept, transformation, maxiter):
         self._reset_attributes()
         self._fit_start_time = time()
         self.isvars = [] if isvars is None else isvars
-        self.asvars = [v for v in varnames if v not in self.isvars]
+        self.transvars = [] if transvars is None else transvars
+        self.asvars = [v for v in varnames if (v not in self.isvars) and (v not in self.transvars)]
+        self.alternatives = np.unique(alt)
+        self.numFixedCoeffs = (len(self.isvars) + len(self.asvars)
+        if not fit_intercept
+        else (len(self.alternatives)-1)*(len(self.isvars)+1) + len(self.asvars))
+        self.numTransformedCoeffs = len(self.transvars)*2 #trans var + lambda
         self.varnames = list(varnames)  # Easier to handle with lists
         self.fit_intercept = fit_intercept
-        self.alternatives = np.unique(alt)
+        self.transformation = transformation
         self.base_alt = self.alternatives[0] if base_alt is None else base_alt
         self.maxiter = maxiter
 
@@ -67,7 +85,7 @@ class ChoiceModel(ABC):
         self.convergence = optimization_res['success']
         self.coeff_ = optimization_res['x']
         self.stderr = np.sqrt(np.diag(optimization_res['hess_inv']))
-        self.zvalues = self.coeff_/self.stderr
+        self.zvalues = np.nan_to_num(self.coeff_/self.stderr)
         self.pvalues = 2*t.pdf(-np.abs(self.zvalues), df=sample_size)
         self.loglikelihood = -optimization_res['fun']
         self.coeff_names = coeff_names
@@ -87,19 +105,25 @@ class ChoiceModel(ABC):
         N = int(len(X)/J)
         isvars = self.isvars.copy()
         asvars = self.asvars.copy()
+        transvars = self.transvars.copy()
         varnames = self.varnames.copy()
 
         if self.fit_intercept:
-            isvars.insert(0, '_intercept')
-            varnames.insert(0, '_intercept')
+            isvars = np.insert(isvars, 0, '_inter')
+            varnames.insert(0, '_inter')
             X = np.hstack((np.ones(J*N)[:, None], X))
+        
+        if self.transformation:
+            self.transFunc = boxcox_transformation
+            self.transform_deriv = boxcox_param_deriv
 
         ispos = [varnames.index(i) for i in isvars]  # Position of IS vars
         aspos = [varnames.index(i) for i in asvars]  # Position of AS vars
+        transpos = [varnames.index(i) for i in transvars]  # Position of trans vars
 
         # Create design matrix
         # For individual specific variables
-        if isvars:
+        if len(isvars):
             # Create a dummy individual specific variables for the alt
             dummy = np.tile(np.eye(J), reps=(N, 1))
             # Remove base alternative
@@ -116,16 +140,23 @@ class ChoiceModel(ABC):
             Xas = X[:, aspos]
             Xas = Xas.reshape(N, J, -1)
 
+        #  For variables to transform
+        if len(transvars):
+            Xtrans = X[:, transpos]
+            Xtrans = Xtrans[:, len(transpos) - 1]
+
         # Set design matrix based on existance of asvars and isvars
-        if asvars and isvars:
+        if len(asvars) and len(isvars):
             X = np.dstack((Xis, Xas))
-        elif asvars:
+        elif len(asvars):
             X = Xas
-        elif isvars:
+        elif len(isvars):
             X = Xis
 
         names = ["{}.{}".format(isvar, j) for isvar in isvars
-                 for j in self.alternatives if j != self.base_alt] + asvars
+                 for j in self.alternatives if j != self.base_alt]
+        lambda_names = ["lambda.{}".format(transvar) for transvar in transvars]
+        names = np.concatenate((names, transvars, lambda_names))
         names = np.array(names)
 
         return X, names
@@ -176,6 +207,8 @@ class ChoiceModel(ABC):
         """
         Prints in console the coefficients and additional estimation outputs
         """
+        print('fixed', self.numFixedCoeffs, 'trans', self.numTransformedCoeffs)
+        print('coeff_names', self.coeff_names)
         if self.coeff_ is None:
             print("The current model has not been yet estimated")
             return
@@ -189,7 +222,7 @@ class ChoiceModel(ABC):
         print("{:19} {:>13} {:>13} {:>13} {:>13}"
               .format("Coefficient", "Estimate", "Std.Err.", "z-val", "P>|z|"))
         print("-"*75)
-        fmt = "{:19} {:13.7f} {:13.7f} {:13.7f} {:13.3g} {:3}"
+        fmt = "{:19} {:13.10f} {:13.10f} {:13.10f} {:13.3g} {:3}"
         for i in range(len(self.coeff_)):
             signif = ""
             if self.pvalues[i] < 0.001:

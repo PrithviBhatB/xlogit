@@ -19,17 +19,17 @@ class MixedLogit(ChoiceModel):
         self.rvdist = None
 
     # X: (N, J, K)
-    def fit(self, X, y, varnames=None, alt=None, isvars=None, id=None,
+    def fit(self, X, y, varnames=None, alt=None, isvars=None, bcvars=None, id=None,
             weights=None, randvars=None, panel=None, base_alt=None,
             fit_intercept=False, init_coeff=None, maxiter=2000,
             random_state=None, n_draws=200, halton=True, verbose=1):
 
-        X, y, varnames, alt, isvars, id, weights, panel\
-            = self._as_array(X, y, varnames, alt, isvars, id, weights, panel)
+        X, y, initialData, varnames, alt, isvars, bcvars, id, weights, panel\
+            = self._as_array(X, y, varnames, alt, isvars, bcvars, id, weights, panel)
 
         self._validate_inputs(X, y, alt, varnames, isvars, id, weights, panel,
                               base_alt, fit_intercept, maxiter)
-        self._pre_fit(alt, varnames, isvars, base_alt,
+        self._pre_fit(alt, varnames, isvars, bcvars, base_alt,
                       fit_intercept, maxiter)
 
         if random_state is not None:
@@ -37,6 +37,7 @@ class MixedLogit(ChoiceModel):
 
         X, y, panel = self._arrange_long_format(X, y, id, alt, panel)
         X, Xnames = self._setup_design_matrix(X)
+        print('Xnamesmes', Xnames)
         J, K, R = X.shape[1], X.shape[2], n_draws
 
         if panel is not None:  # If panel
@@ -79,7 +80,7 @@ class MixedLogit(ChoiceModel):
                 weights = dev.to_gpu(weights)
             if verbose > 0:
                 print("Estimation with GPU processing enabled.")
-
+        print('minimize')
         optimizat_res = \
             minimize(self._loglik_gradient, betas, jac=True, method='BFGS',
                      args=(X, y, panel_info, draws, weights), tol=1e-5,
