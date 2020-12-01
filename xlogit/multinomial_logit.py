@@ -17,17 +17,25 @@ class MultinomialLogit(ChoiceModel):
             init_coeff=None, maxiter=2000, random_state=None, verbose=1):
 
 
+        print('testryan1', 'fit', fit_intercept, 'transformation', transformation)
         X, y, initialData, varnames, alt, isvars, transvars, id, weights, _\
             = self._as_array(X, y, varnames, alt, isvars, transvars, id, weights, None)
         self._validate_inputs(X, y, alt, varnames, isvars, id, weights, None,
                               base_alt, fit_intercept, maxiter)
 
-        self._pre_fit(alt, varnames, isvars, transvars, base_alt, transformation, fit_intercept, maxiter)
+        self._pre_fit(alt, varnames, isvars, transvars, base_alt, fit_intercept, transformation, maxiter)
         X, y, panel = self._arrange_long_format(X, y, id, alt)
-
+        print('testryan2', 'fit', fit_intercept, 'transformation', transformation)
         self.initialData = initialData
+        # self.fixedtransvars = self.transvars
         if random_state is not None:
             np.random.seed(random_state)
+        print('hereinit', self.transformation)
+        if transformation == "boxcox":
+            print('here3')
+            self.transFunc = boxcox_transformation
+            self.transform_deriv = boxcox_param_deriv
+
         if init_coeff is None:
             betas = np.repeat(.0, self.numFixedCoeffs + self.numTransformedCoeffs)
         else:
@@ -37,20 +45,24 @@ class MultinomialLogit(ChoiceModel):
                                  + int(X.shape[1]))
 
         X, Xnames = self._setup_design_matrix(X)
-        y = y.reshape(X.shape[0], X.shape[1])
+        # add transformation vars and corresponding lambdas
+        lambda_names = ["lambda.{}".format(transvar) for transvar in transvars]
+        transnames = np.concatenate((transvars, lambda_names))
+        Xnames = np.concatenate((Xnames, transnames))
+        y = y.reshape(self.N, self.J)
 
         # Call optimization routine
         optimizat_res = self._bfgs_optimization(betas, X, y, weights, maxiter)
         self._post_fit(optimizat_res, Xnames, int(1182/4), verbose)
 
     def _compute_probabilities(self, betas, X):
-        transpos = [self.varnames.index(i) for i in self.transvars]  # Position of trans vars
+        transpos = [self.varnames.tolist().index(i) for i in self.transvars]  # Position of trans vars
         X_trans = self.initialData[:, transpos]
-        X_trans = X_trans.reshape(X.shape[0], len(self.alternatives), len(transpos))
+        X_trans = X_trans.reshape(self.N, self.J, len(transpos))
         XB = 0
         if self.numFixedCoeffs > 0:
             B = betas[0:self.numFixedCoeffs]
-            XB = X.dot(B)
+            XB = self.Xf.dot(B)
         Xtrans_lambda = None
         if self.numTransformedCoeffs > 0:
             B_transvars = betas[self.numFixedCoeffs:int(self.numFixedCoeffs+(self.numTransformedCoeffs/2))]
@@ -68,28 +80,23 @@ class MultinomialLogit(ChoiceModel):
 
     def _loglik_and_gradient(self, betas, X, y, weights):
         p, Xtrans_lmda = self._compute_probabilities(betas, X)
-        print('p', p.shape)
         # Log likelihood
         lik = np.sum(y*p, axis=1)
         loglik = np.log(lik)
         if weights is not None:
             loglik = loglik*weights
         loglik = np.sum(loglik)
-        print('loglik', loglik)
         # Individual contribution to the gradient
 
-        transpos = [self.varnames.index(i) for i in self.transvars]  # Position of trans vars
+        transpos = [self.varnames.tolist().index(i) for i in self.transvars]  # Position of trans vars
         B_trans = betas[self.numFixedCoeffs:int(self.numFixedCoeffs+(self.numTransformedCoeffs/2))]
         lambdas = betas[int(self.numFixedCoeffs+(self.numTransformedCoeffs/2)):]
-        # print('X shape', X.shape)
         X_trans = self.initialData[:, transpos]
-        X_trans = X_trans.reshape(X.shape[0], len(self.alternatives), len(transpos))
-        # K = (len(self.alternatives)-1)*(len(self.isvars)+1) + len(self.asvars)  # Number of fixed coeffs
+        X_trans = X_trans.reshape(self.N, len(self.alternatives), len(transpos))
         if self.numFixedCoeffs > 0:
-            grad = np.einsum('nj,njk -> nk', (y-p), X)
+            grad = np.einsum('nj,njk -> nk', (y-p), self.Xf)
         else:
             grad = np.array([])
-        # print('initgrad', grad)
         if self.numTransformedCoeffs > 0:
             # Individual contribution of trans to the gradient
             gtrans = np.einsum('nj, njk -> nk', (y - p), Xtrans_lmda)
@@ -97,15 +104,12 @@ class MultinomialLogit(ChoiceModel):
             der_XBtrans = np.einsum('njk,k -> njk', der_Xtrans_lmda, B_trans)
             gtrans_lmda = np.einsum('nj,njk -> nk', (y - p), der_XBtrans)
             grad = np.concatenate((grad, gtrans, gtrans_lmda), axis=1) if grad.size else np.concatenate((gtrans, gtrans_lmda), axis=1) # (N, K)
-
         if weights is not None:
             grad = grad*weights[:, None]
 
         H = np.dot(grad.T, grad)
         Hinv = np.linalg.pinv(H)
         grad = np.sum(grad, axis=0)
-        print('Hinv', Hinv)
-        print('grad', grad)
         return (-loglik, -grad, Hinv)
 
     def _ryan_optimization(self, betas, X, y, weights, maxiter):
@@ -114,24 +118,19 @@ class MultinomialLogit(ChoiceModel):
         return res
 
     def _bfgs_optimization(self, betas, X, y, weights, maxiter):
-        print('bfgsbetas', betas)
         res, g, Hinv = self._loglik_and_gradient(betas, X, y, weights)
         current_iteration = 0
         convergence = False
         # betas = np.zeros(10)
         while True:
             old_g = g
-            # print('g', g)
             d = -Hinv.dot(g)
-            # print('d', d)
             step = 2
             while True:
                 step = step/2
                 s = step*d
                 # s[s == 0] = 1e+30
                 betas = betas + s
-                # print('s', s)
-                # print('betas step', betas)
                 resnew, gnew, _ = self._loglik_and_gradient(betas, X, y,
                                                             weights)
                 if resnew <= res or step < 1e-10:
@@ -147,7 +146,7 @@ class MultinomialLogit(ChoiceModel):
                     Hinv.dot(delta_g), s) + (np.outer(s, delta_g)).dot(Hinv)) /
                     (s.dot(delta_g)))
 
-            print('Hinvhere', Hinv)
+            # print('Hinvhere', Hinv)
             current_iteration = current_iteration + 1
             if np.abs(res - old_res) < 0.00001:
                 convergence = True

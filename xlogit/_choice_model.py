@@ -57,23 +57,26 @@ class ChoiceModel(ABC):
         varnames = np.asarray(varnames) if varnames is not None else None
         alt = np.asarray(alt) if alt is not None else None
         isvars = np.asarray(isvars) if isvars is not None else None
-        transvars = np.asarray(transvars) if transvars is not None else None
+        transvars = np.asarray(transvars) if transvars is not None else []
         id = np.asarray(id) if id is not None else None
         weights = np.asarray(weights) if weights is not None else None
         panel = np.asarray(panel) if panel is not None else None
         return X, y, initialData, varnames, alt, isvars, transvars, id, weights, panel
 
     def _pre_fit(self, alt, varnames, isvars, transvars, base_alt,
-                 fit_intercept, transformation, maxiter):
+                 fit_intercept, transformation, maxiter, randvars=None):
         self._reset_attributes()
         self._fit_start_time = time()
         self.isvars = [] if isvars is None else isvars
         self.transvars = [] if transvars is None else transvars
-        self.asvars = [v for v in varnames if (v not in self.isvars) and (v not in self.transvars)]
+        self.randvars = [] if randvars is None else randvars
+        self.asvars = [v for v in varnames if ((v not in self.isvars) and (v not in self.transvars) and (v not in self.randvars))]
+        self.randtransvars = [] if transvars is None else []
+        self.fixedtransvars = [] if transvars is None else []
         self.alternatives = np.unique(alt)
-        self.numFixedCoeffs = (len(self.isvars) + len(self.asvars)
+        self.numFixedCoeffs = ((len(self.alternatives)-1)*(len(self.isvars)) + len(self.asvars) # TODO: CHECK
         if not fit_intercept
-        else (len(self.alternatives)-1)*(len(self.isvars)+1) + len(self.asvars))
+        else (len(self.alternatives)-1)*(len(self.isvars)+1)) #+ len(self.asvars))
         self.numTransformedCoeffs = len(self.transvars)*2 #trans var + lambda
         self.varnames = list(varnames)  # Easier to handle with lists
         self.fit_intercept = fit_intercept
@@ -100,30 +103,52 @@ class ChoiceModel(ABC):
                   "iterations. ****".format(self.total_iter))
             print("Message: "+optimization_res['message'])
 
+
     def _setup_design_matrix(self, X):
         J = len(self.alternatives)
         N = int(len(X)/J)
+        self.N = N
+        self.J = J
+        self.P = 1 # panel size, used in create_final_matrix
+        self.R = 100
         isvars = self.isvars.copy()
         asvars = self.asvars.copy()
         transvars = self.transvars.copy()
+        randvars = self.randvars.copy()
+        randtransvars = self.randtransvars.copy()
+        fixedtransvars = self.fixedtransvars.copy()
         varnames = self.varnames.copy()
-
+        self.varnames = np.array(varnames)
         if self.fit_intercept:
-            isvars = np.insert(isvars, 0, '_inter')
-            varnames.insert(0, '_inter')
+            self.isvars = np.insert(np.array(self.isvars, dtype="<U16"), 0, '_inter')
+            self.varnames = np.insert(np.array(self.varnames, dtype="<U16"), 0, '_inter')
+            self.initialData = np.hstack((np.ones(J*N)[:, None], self.initialData))
             X = np.hstack((np.ones(J*N)[:, None], X))
         
-        if self.transformation:
+        if self.transformation == "boxcox":
             self.transFunc = boxcox_transformation
             self.transform_deriv = boxcox_param_deriv
 
-        ispos = [varnames.index(i) for i in isvars]  # Position of IS vars
-        aspos = [varnames.index(i) for i in asvars]  # Position of AS vars
-        transpos = [varnames.index(i) for i in transvars]  # Position of trans vars
+        P_i = np.ones([self.N]).astype(int)
+        S = np.zeros((self.N, self.P, self.J))
+        for i in range(N):
+            S[i, 0:P_i[i], :] = 1
+        self.S = S
+        ispos = [self.varnames.tolist().index(i) for i in self.isvars]  # Position of IS vars
+        aspos = [self.varnames.tolist().index(i) for i in asvars]  # Position of AS vars
+        randpos =  [self.varnames.tolist().index(i) for i in randvars]  # Position of AS vars
+        transpos = [self.varnames.tolist().index(i) for i in transvars]  # Position of trans vars
+        randtranspos = [self.varnames.tolist().index(i) for i in randtransvars] # bc transformed variables with random coeffs
+        fixedtranspos = [self.varnames.tolist().index(i) for i in fixedtransvars] # bc transformed variables with fixed coeffs
+        self.Kf = (J-1)*len(ispos) + len(aspos) #Number of fixed coefficients
+        self.Kr = len(randpos)                     #Number of random coefficients
+        self.Kftrans = len(fixedtranspos)   #Number of fixed coefficients of bc transformed vars
+        self.Krtrans= len(randtranspos)   #Number of random coefficients of bc transformed vars
 
         # Create design matrix
         # For individual specific variables
-        if len(isvars):
+        self.Xis = None
+        if len(self.isvars):
             # Create a dummy individual specific variables for the alt
             dummy = np.tile(np.eye(J), reps=(N, 1))
             # Remove base alternative
@@ -133,30 +158,79 @@ class ChoiceModel(ABC):
             Xis = X[:, ispos]
             # Multiply dummy representation by the individual specific data
             Xis = np.einsum('nj,nk->njk', Xis, dummy)
-            Xis = Xis.reshape(N, J, (J-1)*len(ispos))
-
+            self.Xis = Xis.reshape(N, J, (J-1)*len(ispos))
+        else:
+            self.Xis = np.array([])
         # For alternative specific variables
+        self.Xas = None
         if asvars:
             Xas = X[:, aspos]
-            Xas = Xas.reshape(N, J, -1)
+            self.Xas = Xas.reshape(N, J, -1)
 
+        self.Xr = None
+        if len(self.randvars):
+            Xr = X[:, randpos]
+            self.Xr = Xr.reshape(N, J, -1)
+
+        self.Xf_trans = None
+        self.Xr_trans = None
+        self.Xtrans = None
         #  For variables to transform
         if len(transvars):
-            Xtrans = X[:, transpos]
-            Xtrans = Xtrans[:, len(transpos) - 1]
+            if (self.Krtrans):
+                    Xr_trans = X[:, randtranspos]
+                    self.Xr_trans = Xr_trans.reshape(N, J, -1)
+
+            if (self.Kftrans):
+                Xf_trans = X[:, fixedtranspos]
+                self.Xf_trans = Xf_trans.reshape(N, J, -1)
+
+            if(not len(self.randtransvars) and not len(self.fixedtransvars)):
+                Xtrans = X[:, transpos]
+                self.Xtrans = Xtrans[:, len(transpos) - 1]
 
         # Set design matrix based on existance of asvars and isvars
-        if len(asvars) and len(isvars):
-            X = np.dstack((Xis, Xas))
-        elif len(asvars):
-            X = Xas
-        elif len(isvars):
-            X = Xis
+        self.Xf = []
+        if len(self.asvars) and len(self.isvars):
+            self.Xf = np.dstack((self.Xis, self.Xas))
+        elif len(self.asvars):
+            self.Xf = self.Xas
+        elif len(self.isvars):
+            self.Xf = self.Xis
 
+        def create_final_matrix(design_matrix, num_col, isZero=True):
+            X_Final = np.zeros((self.N, self.P,self.J, num_col)) if isZero \
+                      else np.ones((self.N, self.P,self.J, num_col))
+            k = 0
+            P_i = np.ones([self.N]).astype(int)
+            while k < self.N:
+                for i in range(self.N):
+                    for j in range(P_i[i]):
+                        X_Final[i,j,:,:] = design_matrix[k,:,:]
+                        k = k+1
+                        if(k==self.N):
+                            break
+            return(X_Final)
+
+        if (self.Kr + self.Kftrans + self.Krtrans) > 0:
+            if self.Kf !=0:
+                self.Xf = create_final_matrix(self.Xf, self.Kf) #Data for fixed coeff
+            if self.Kr !=0:
+                self.Xr = create_final_matrix(self.Xr,self.Kr) #Data for random coeff
+            if self.Kftrans != 0:
+                self.Xf_trans = create_final_matrix(self.Xf_trans, self.Kftrans) #Data for fixed coeff
+            if self.Krtrans != 0:
+                self.Xr_trans = create_final_matrix(self.Xr_trans, self.Krtrans) #Data for random coeff
+        intercept_names = ["_intercept.{}".format(j) for j in self.alternatives
+                            if j != self.base_alt] if self.fit_intercept else []
         names = ["{}.{}".format(isvar, j) for isvar in isvars
                  for j in self.alternatives if j != self.base_alt]
-        lambda_names = ["lambda.{}".format(transvar) for transvar in transvars]
-        names = np.concatenate((names, transvars, lambda_names))
+        lambda_names_fixed = ["lambda.{}".format(transvar) for transvar in fixedtransvars]
+        lambda_names_rand = ["lambda.{}".format(transvar) for transvar in randtransvars]
+        sd_rand = np.char.add("sd.", self.varnames[randpos])
+        sd_rand_trans = np.char.add("sd.", self.varnames[randtranspos])
+        names = np.concatenate((intercept_names, names, asvars, randvars, sd_rand,
+        fixedtransvars, lambda_names_fixed, randtransvars, lambda_names_rand, sd_rand_trans))
         names = np.array(names)
 
         return X, names
