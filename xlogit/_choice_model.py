@@ -6,11 +6,12 @@ Implements multinomial and mixed logit models
 from math import e
 import numpy as np
 from numpy.core.fromnumeric import var
+from numpy.lib.arraysetops import isin
 from scipy.stats import t
 from time import time
 from abc import ABC, abstractmethod
 from .boxcox_functions import boxcox_transformation, boxcox_param_deriv
-
+from itertools import product as cproduct
 
 class ChoiceModel(ABC):
     """Base class for estimation of discrete choice models"""
@@ -47,7 +48,7 @@ class ChoiceModel(ABC):
     def fit(self, X, y, varnames=None, alt=None, isvars=None, transvars=None,
             transformation=None, id=None,
             weights=None, base_alt=None, fit_intercept=False, init_coeff=None,
-            maxiter=2000, random_state=None):
+            maxiter=2000, random_state=None, correlation=None):
         pass
 
     def _as_array(self, X, y, varnames, alt, isvars, transvars, id, weights, panel):
@@ -64,7 +65,7 @@ class ChoiceModel(ABC):
         return X, y, initialData, varnames, alt, isvars, transvars, id, weights, panel
 
     def _pre_fit(self, alt, varnames, isvars, transvars, base_alt,
-                 fit_intercept, transformation, maxiter, randvars=None):
+                 fit_intercept, transformation, correlation, maxiter, randvars=None):
         self._reset_attributes()
         self._fit_start_time = time()
         self.isvars = [] if isvars is None else isvars
@@ -82,6 +83,7 @@ class ChoiceModel(ABC):
         self.fit_intercept = fit_intercept
         self.transformation = transformation
         self.base_alt = self.alternatives[0] if base_alt is None else base_alt
+        self.correlation = False if correlation is None else correlation
         self.maxiter = maxiter
 
     def _post_fit(self, optimization_res, coeff_names, sample_size, verbose=1):
@@ -115,6 +117,7 @@ class ChoiceModel(ABC):
         asvars = self.asvars.copy()
         transvars = self.transvars.copy()
         randvars = self.randvars.copy()
+        print('randvars', randvars)
         randtransvars = self.randtransvars.copy()
         fixedtransvars = self.fixedtransvars.copy()
         varnames = self.varnames.copy()
@@ -140,11 +143,34 @@ class ChoiceModel(ABC):
         transpos = [self.varnames.tolist().index(i) for i in transvars]  # Position of trans vars
         randtranspos = [self.varnames.tolist().index(i) for i in randtransvars] # bc transformed variables with random coeffs
         fixedtranspos = [self.varnames.tolist().index(i) for i in fixedtransvars] # bc transformed variables with fixed coeffs
+        # if correlation = True correlation pos is randpos, if list get correct pos
+        self.correlationpos = randpos
+        if (isinstance(self.correlation, list)):
+            self.correlationpos = [self.randvars.index(i) for i in self.correlation]
+        if self.correlation:
+            self.uncorrelatedpos = [self.randvars.index(i) for i in self.randvars if i not in self.correlation]
         self.Kf = (J-1)*len(ispos) + len(aspos) #Number of fixed coefficients
         self.Kr = len(randpos)                     #Number of random coefficients
         self.Kftrans = len(fixedtranspos)   #Number of fixed coefficients of bc transformed vars
         self.Krtrans= len(randtranspos)   #Number of random coefficients of bc transformed vars
-
+        self.Kchol = 0  # Number of random beta cholesky factors
+        self.correlationLength = 0
+        self.Kbw = self.Kr 
+        
+        if (self.correlation):
+            if (isinstance(self.correlation, list)):
+                self.correlationLength = len(self.correlation)
+                self.Kbw = self.Kr - len(self.correlation)
+            else:
+                self.correlationLength = self.Kr
+        print('hereprint', type(self.correlation))
+        if (self.correlation):
+            if (isinstance(self.correlation, list)):
+                self.Kchol = (len(self.correlation) * (len(self.correlation)+1))/2
+            else:
+                self.Kchol =  (len(self.randvars) * (len(self.randvars)+1))/2
+            print('theifstate', self.Kchol)
+        print('self.Kf', self.Kf, 'self.Kr', self.Kr, 'self.Kchol', self.Kchol, 'self.Kbw', self.Kbw)
         # Create design matrix
         # For individual specific variables
         self.Xis = None
@@ -227,9 +253,24 @@ class ChoiceModel(ABC):
                  for j in self.alternatives if j != self.base_alt]
         lambda_names_fixed = ["lambda.{}".format(transvar) for transvar in fixedtransvars]
         lambda_names_rand = ["lambda.{}".format(transvar) for transvar in randtransvars]
-        sd_rand = np.char.add("sd.", self.varnames[randpos])
+        # combinations = [".".join(map(str, comb)) for comb in combinations(self.randvars, 2)]
+        print('typetest', type(self.randvars))
+        #TODO: Fix this bomb of names here to work all cases
+        chol =  ["chol." + self.varnames[i] + "." + \
+                    self.varnames[j] for i \
+                    in range(self.correlationLength) for j in range(i+1) ]
+        br_w_names = ["sd." + x for x in self.randvars]
+        if self.correlation:
+            sd_uncorrelated_pos = [self.varnames.tolist().index(x) for x in self.varnames 
+                        if x not in self.correlation and x in self.randvars]
+            # print('randpos', randpos)
+            br_w_names = np.char.add("sd.", self.varnames[sd_uncorrelated_pos])
+        # print('(list(set(randpos) - set(self.correlation)))', type(sorted(list(set(randpos) - set(self.correlation)))))
+        # sd_rand = ["sd." + self.varnames[i] for i in sorted(list(set(randpos) - set(self.correlation)))]
+        print('randtranspos', randtranspos, 'randpos', randpos)
         sd_rand_trans = np.char.add("sd.", self.varnames[randtranspos])
-        names = np.concatenate((intercept_names, names, asvars, randvars, sd_rand,
+        print('sd_rand_trans', sd_rand_trans)
+        names = np.concatenate((intercept_names, names, asvars, randvars, chol, br_w_names,
         fixedtransvars, lambda_names_fixed, randtransvars, lambda_names_rand, sd_rand_trans))
         names = np.array(names)
 
@@ -281,8 +322,6 @@ class ChoiceModel(ABC):
         """
         Prints in console the coefficients and additional estimation outputs
         """
-        print('fixed', self.numFixedCoeffs, 'trans', self.numTransformedCoeffs)
-        print('coeff_names', self.coeff_names)
         if self.coeff_ is None:
             print("The current model has not been yet estimated")
             return

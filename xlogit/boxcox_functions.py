@@ -12,6 +12,7 @@ def boxcox_transformation(X, lambdas):
     for i in range(len(lambdas)):
         i -= 1
         if lambdas[i] == 0:
+            print('X[:, :, i]', X[:, :, i])
             boxcox_X[:, :, i] = np.log(X[:, :, i])
         else:
             boxcox_X[:, :, i] = np.nan_to_num((np.power(X[:, :, i], lambdas[i]) - 1) /
@@ -53,6 +54,7 @@ def boxcox_transformation_mixed(X, lambdas):
     for i in range(len(lambdas)):
         i -= 1
         if lambdas[i] == 0:
+            print('X[:, :, i]', X[:, :, :, i])
             boxcox_X[:, :, :, i] = np.log(X[:, :, :, i])
         else:
             boxcox_X[:, :, :, i] = np.nan_to_num((np.power(X[:, :, :, i],
