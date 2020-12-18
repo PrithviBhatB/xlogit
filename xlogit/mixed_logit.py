@@ -46,6 +46,7 @@ class MixedLogit(ChoiceModel):
         print('self.randvars',    self.randvars, 'self.randtransvars', self.randtransvars, 'self.fixedtransvars', self.fixedtransvars)
         print('transvars', transvars)
         X, Xnames = self._setup_design_matrix(X)
+<<<<<<< Updated upstream
         if self.transformation == "boxcox":
             self.transFunc = boxcox_transformation_mixed
             self.transform_deriv = boxcox_param_deriv_mixed
@@ -63,6 +64,19 @@ class MixedLogit(ChoiceModel):
         # N, 1))
         panel_info = np.ones((N, 1))
         # X = X.reshape(N, P, J, K)
+=======
+        print('Xnamesmes', Xnames)
+        J, K, R = X.shape[1], X.shape[2], n_draws
+
+        if panel is not None:  # If panel
+            X, y, panel_info = self._balance_panels(X, y, panel)
+            N, P = panel_info.shape
+        else:
+            N, P = X.shape[0], 1
+            panel_info = np.ones((N, 1))
+
+        X = X.reshape(N, P, J, K)
+>>>>>>> Stashed changes
         y = y.reshape(N, P, J, 1)
         self.y = y
         self.n_draws = n_draws
