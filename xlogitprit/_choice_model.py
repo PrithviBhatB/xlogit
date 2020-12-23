@@ -6,10 +6,13 @@ Implements multinomial and mixed logit models
 from math import e
 import numpy as np
 from numpy.core.fromnumeric import var
+from numpy.lib.arraysetops import isin
 from scipy.stats import t
+import scipy as sc
 from time import time
 from abc import ABC, abstractmethod
 from .boxcox_functions import boxcox_transformation, boxcox_param_deriv
+from itertools import product as cproduct
 
 class ChoiceModel(ABC):
     """Base class for estimation of discrete choice models"""
@@ -56,35 +59,43 @@ class ChoiceModel(ABC):
         varnames = np.asarray(varnames) if varnames is not None else None
         alt = np.asarray(alt) if alt is not None else None
         isvars = np.asarray(isvars) if isvars is not None else None
-        transvars = np.asarray(transvars) if transvars is not None else None
+        transvars = np.asarray(transvars) if transvars is not None else []
         id = np.asarray(id) if id is not None else None
         weights = np.asarray(weights) if weights is not None else None
         panel = np.asarray(panel) if panel is not None else None
         return X, y, initialData, varnames, alt, isvars, transvars, id, weights, panel
 
     def _pre_fit(self, alt, varnames, isvars, transvars, base_alt,
-                 fit_intercept, transformation, maxiter):
+                 fit_intercept, transformation, maxiter, panel, correlation=None, randvars=None):
         self._reset_attributes()
         self._fit_start_time = time()
         self.isvars = [] if isvars is None else isvars
         self.transvars = [] if transvars is None else transvars
-        self.asvars = [v for v in varnames if (v not in self.isvars) and (v not in self.transvars)]
+        self.randvars = [] if randvars is None else randvars
+        self.asvars = [v for v in varnames if ((v not in self.isvars) and (v not in self.transvars) and (v not in self.randvars))]
+        self.randtransvars = [] if transvars is None else []
+        self.fixedtransvars = [] if transvars is None else []
         self.alternatives = np.unique(alt)
-        self.numFixedCoeffs = (len(self.isvars) + len(self.asvars)
+        self.numFixedCoeffs = ((len(self.alternatives)-1)*(len(self.isvars)) + len(self.asvars) # TODO: CHECK
         if not fit_intercept
-        else (len(self.alternatives)-1)*(len(self.isvars)+1) + len(self.asvars))
-        self.numTransformedCoeffs = len(self.transvars)*2 #trans var + lambda
+        else (len(self.alternatives)-1)*(len(self.isvars)+1) + len(self.asvars)) #+ len(self.asvars))
+        self.numTransformedCoeffs = len(self.transvars)*2 #trans var + sd? + lambda
         self.varnames = list(varnames)  # Easier to handle with lists
         self.fit_intercept = fit_intercept
         self.transformation = transformation
         self.base_alt = self.alternatives[0] if base_alt is None else base_alt
         self.correlation = False if correlation is None else correlation
         self.maxiter = maxiter
+        self.panel = panel
 
     def _post_fit(self, optimization_res, coeff_names, sample_size, verbose=1):
         self.convergence = optimization_res['success']
         self.coeff_ = optimization_res['x']
-        self.stderr = np.sqrt(np.diag(optimization_res['hess_inv']))
+        if (isinstance(optimization_res['hess_inv'], sc.optimize.lbfgsb.LbfgsInvHessProduct)):
+            hess = optimization_res['hess_inv'].todense()
+        else:
+            hess = optimization_res['hess_inv']
+        self.stderr = np.sqrt(np.diag(np.array(hess)))
         self.zvalues = np.nan_to_num(self.coeff_/self.stderr)
         self.pvalues = 2*t.pdf(-np.abs(self.zvalues), df=sample_size)
         self.loglikelihood = -optimization_res['fun']
@@ -103,34 +114,80 @@ class ChoiceModel(ABC):
 
     def _setup_design_matrix(self, X):
         J = len(self.alternatives)
-        N = int(len(X)/J)
+        N = P_N =  int(len(X)/J)
+        self.P = 0
         self.N = N
         self.J = J
-        self.P = 1 # panel size, used in create_final_matrix
-        self.R = 100
+        if self.panel is not None:
+            # Panel size.
+            self.P_i = ((np.unique(self.panel, return_counts=True)[1])/J).astype(int)
+            self.P = np.max(self.P_i)
+            self.N = len(self.P_i)
+        else:
+            self.P = 1
+            self.P_i = np.ones([N]).astype(int)
         isvars = self.isvars.copy()
         asvars = self.asvars.copy()
         transvars = self.transvars.copy()
+        randvars = self.randvars.copy()
+        randtransvars = self.randtransvars.copy()
+        fixedtransvars = self.fixedtransvars.copy()
         varnames = self.varnames.copy()
         self.varnames = np.array(varnames)
         if self.fit_intercept:
-            isvars = np.insert(isvars, 0, '_inter')
-            varnames.insert(0, '_inter')
+            self.isvars = np.insert(np.array(self.isvars, dtype="<U16"), 0, '_inter')
+            self.varnames = np.insert(np.array(self.varnames, dtype="<U16"), 0, '_inter')
+            self.initialData = np.hstack((np.ones(J*N)[:, None], self.initialData))
             X = np.hstack((np.ones(J*N)[:, None], X))
         
-        if self.transformation:
+        if self.transformation == "boxcox":
             self.transFunc = boxcox_transformation
             self.transform_deriv = boxcox_param_deriv
 
-        ispos = [varnames.index(i) for i in isvars]  # Position of IS vars
-        aspos = [varnames.index(i) for i in asvars]  # Position of AS vars
-        transpos = [varnames.index(i) for i in transvars]  # Position of trans vars
-
+        # P_i = np.ones([self.N]).astype(int)
+        S = np.zeros((self.N, self.P, self.J))
+        for i in range(self.N):
+            S[i, 0:self.P_i[i], :] = 1
+        self.S = S
+        ispos = [self.varnames.tolist().index(i) for i in self.isvars]  # Position of IS vars
+        aspos = [self.varnames.tolist().index(i) for i in asvars]  # Position of AS vars
+        randpos =  [self.varnames.tolist().index(i) for i in randvars]  # Position of AS vars
+        transpos = [self.varnames.tolist().index(i) for i in transvars]  # Position of trans vars
+        randtranspos = [self.varnames.tolist().index(i) for i in randtransvars] # bc transformed variables with random coeffs
+        fixedtranspos = [self.varnames.tolist().index(i) for i in fixedtransvars] # bc transformed variables with fixed coeffs
+        # if correlation = True correlation pos is randpos, if list get correct pos
+        self.correlationpos = []
+        if randvars:
+            self.correlationpos = [self.randvars.index(i) for i in randvars] # Position of correlated variables within randvars
+        if (isinstance(self.correlation, list)):
+            self.correlationpos = [self.randvars.index(i) for i in self.correlation]
+            self.uncorrelatedpos = [self.randvars.index(i) for i in self.randvars if i not in self.correlation]
+        self.Kf = (J-1)*len(ispos) + len(aspos) #Number of fixed coefficients
+        self.Kr = len(randpos)                     #Number of random coefficients
+        self.Kftrans = len(fixedtranspos)   #Number of fixed coefficients of bc transformed vars
+        self.Krtrans= len(randtranspos)   #Number of random coefficients of bc transformed vars
+        self.Kchol = 0  # Number of random beta cholesky factors
+        self.correlationLength = 0
+        self.Kbw = self.Kr
+        
+        if (self.correlation):
+            if (isinstance(self.correlation, list)):
+                self.correlationLength = len(self.correlation)
+                self.Kbw = self.Kr - len(self.correlation)
+            else:
+                self.correlationLength = self.Kr
+                self.Kbw = 0
+        if (self.correlation):
+            if (isinstance(self.correlation, list)):
+                self.Kchol = (len(self.correlation) * (len(self.correlation)+1))/2
+            else:
+                self.Kchol =  (len(self.randvars) * (len(self.randvars)+1))/2
         # Create design matrix
         # For individual specific variables
-        if len(isvars):
+        self.Xis = None
+        if len(self.isvars):
             # Create a dummy individual specific variables for the alt
-            dummy = np.tile(np.eye(J), reps=(N, 1))
+            dummy = np.tile(np.eye(J), reps=(P_N, 1))
             # Remove base alternative
             dummy = np.delete(dummy,
                               np.where(self.alternatives == self.base_alt)[0],
@@ -138,19 +195,19 @@ class ChoiceModel(ABC):
             Xis = X[:, ispos]
             # Multiply dummy representation by the individual specific data
             Xis = np.einsum('nj,nk->njk', Xis, dummy)
-            self.Xis = Xis.reshape(N, J, (J-1)*len(ispos))
+            self.Xis = Xis.reshape(P_N, self.J, (self.J-1)*len(ispos))
         else:
             self.Xis = np.array([])
         # For alternative specific variables
         self.Xas = None
         if asvars:
             Xas = X[:, aspos]
-            self.Xas = Xas.reshape(N, J, -1)
+            self.Xas = Xas.reshape(P_N, self.J, -1)
 
         self.Xr = None
         if len(self.randvars):
             Xr = X[:, randpos]
-            self.Xr = Xr.reshape(N, J, -1)
+            self.Xr = Xr.reshape(P_N, self.J, -1)
 
         self.Xf_trans = None
         self.Xr_trans = None
@@ -159,30 +216,39 @@ class ChoiceModel(ABC):
         if len(transvars):
             if (self.Krtrans):
                     Xr_trans = X[:, randtranspos]
-                    self.Xr_trans = Xr_trans.reshape(N, J, -1)
+                    self.Xr_trans = Xr_trans.reshape(P_N, J, -1)
 
             if (self.Kftrans):
                 Xf_trans = X[:, fixedtranspos]
-                self.Xf_trans = Xf_trans.reshape(N, J, -1)
+                self.Xf_trans = Xf_trans.reshape(P_N, J, -1)
 
             if(not len(self.randtransvars) and not len(self.fixedtransvars)):
                 Xtrans = X[:, transpos]
                 self.Xtrans = Xtrans[:, len(transpos) - 1]
 
-        #  For variables to transform
-        if len(transvars):
-            Xtrans = X[:, transpos]
-            Xtrans = Xtrans[:, len(transpos) - 1]
-
         # Set design matrix based on existance of asvars and isvars
-        if len(asvars) and len(isvars):
-            X = np.dstack((Xis, Xas))
-        elif len(asvars):
-            X = Xas
-        elif len(isvars):
-            X = Xis
+        self.Xf = []
+        if len(self.asvars) and len(self.isvars):
+            self.Xf = np.dstack((self.Xis, self.Xas))
+        elif len(self.asvars):
+            self.Xf = self.Xas
+        elif len(self.isvars):
+            self.Xf = self.Xis
 
-        if (self.Kr + self.Kftrans + self.Krtrans) > 0:
+
+        def create_final_matrix(design_matrix, num_col, isZero=True):
+            X_Final = np.zeros((self.N, self.P, self.J, num_col)) if isZero \
+                      else np.ones((self.N, self.P, self.J, num_col))
+            k = 0
+            while k < P_N:
+                for i in range(self.N):
+                    for j in range(self.P_i[i]):
+                        X_Final[i,j,:,:] = design_matrix[k,:,:]
+                        k = k+1
+            return(X_Final)
+
+        if (self.Kf + self.Kr + self.Kftrans + self.Krtrans) > 0:
+            # TODO: BALANCE PANELS
             if self.Kf !=0:
                 self.Xf = create_final_matrix(self.Xf, self.Kf) #Data for fixed coeff
             if self.Kr !=0:
@@ -191,12 +257,54 @@ class ChoiceModel(ABC):
                 self.Xf_trans = create_final_matrix(self.Xf_trans, self.Kftrans) #Data for fixed coeff
             if self.Krtrans != 0:
                 self.Xr_trans = create_final_matrix(self.Xr_trans, self.Krtrans) #Data for random coeff
+        self.y = create_final_matrix((self.y.reshape(P_N, self.J, 1)), 1)
+        
+        
+        def _balance_panels(self, X, y, panel):
+            _, p_obs = np.unique(self.panel, return_counts=True)
+            p_obs = (p_obs/J).astype(int)
+            if X is None:
+                return None
+            if not np.all(p_obs[0] == p_obs):  # Balancing needed
+                Xbal = np.zeros_like(X)
+                self.panel_info = np.zeros((self.N, self.P))
+                cum_p = 1 # Cumulative sum of n_obs at each iteration
+                # TODO: Why = 1 works? (but original = 0 doesn't)
+                for n, p in enumerate(p_obs):
+                    Xbal[n*self.P:n*self.P +p, :, :, :] = X[cum_p:cum_p + p, :, :, :]
+                    self.panel_info[n, :p] = np.ones(p)
+                    cum_p += p
+            else: # No balancing needed
+                Xbal = X
+                self.panel_info = np.ones((self.N, self.P))
+            return Xbal
+
+        if (self.Kf > 0):
+            self.Xf = _balance_panels(self, self.Xf, self.y, self.panel)
+        self.Xr = _balance_panels(self, self.Xr, self.y, self.panel)
+        self.Xf_trans = _balance_panels(self, self.Xf_trans, self.y, self.panel)
+        self.Xr_trans = _balance_panels(self, self.Xr_trans, self.y, self.panel)
+        self.y = _balance_panels(self, self.y, self.y, self.panel)
+
+
         intercept_names = ["_intercept.{}".format(j) for j in self.alternatives
                             if j != self.base_alt] if self.fit_intercept else []
         names = ["{}.{}".format(isvar, j) for isvar in isvars
                  for j in self.alternatives if j != self.base_alt]
-        lambda_names = ["lambda.{}".format(transvar) for transvar in transvars]
-        names = np.concatenate((names, transvars, lambda_names))
+        lambda_names_fixed = ["lambda.{}".format(transvar) for transvar in fixedtransvars]
+        lambda_names_rand = ["lambda.{}".format(transvar) for transvar in randtransvars]
+        randvars = [x for x in self.randvars]
+        chol =  ["chol." + self.randvars[self.correlationpos[i]] + "." + \
+                    self.randvars[self.correlationpos[j]] for i \
+                    in range(self.correlationLength) for j in range(i+1) ]
+        br_w_names = ["sd." + x for x in self.randvars]
+        if (isinstance(self.correlation, list)): #if not all r.v.s correlated...
+            sd_uncorrelated_pos = [self.varnames.tolist().index(x) for x in self.varnames 
+                        if x not in self.correlation and x in self.randvars]
+            br_w_names = np.char.add("sd.", self.varnames[sd_uncorrelated_pos])
+        sd_rand_trans = np.char.add("sd.", self.varnames[randtranspos])
+        names = np.concatenate((intercept_names, names, asvars, randvars, chol, br_w_names,
+        fixedtransvars, lambda_names_fixed, randtransvars, sd_rand_trans, lambda_names_rand))
         names = np.array(names)
 
         return X, names
@@ -247,8 +355,6 @@ class ChoiceModel(ABC):
         """
         Prints in console the coefficients and additional estimation outputs
         """
-        print('fixed', self.numFixedCoeffs, 'trans', self.numTransformedCoeffs)
-        print('coeff_names', self.coeff_names)
         if self.coeff_ is None:
             print("The current model has not been yet estimated")
             return
@@ -275,7 +381,8 @@ class ChoiceModel(ABC):
                 signif = "."
             print(fmt.format(self.coeff_names[i][:19], self.coeff_[i],
                              self.stderr[i], self.zvalues[i], self.pvalues[i],
-                             signif))
+                             signif
+                             ))
         print("-"*75)
         print("Significance:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1")
         print("")

@@ -10,7 +10,7 @@ def boxcox_transformation(X, lambdas):
     """
     boxcox_X = np.zeros_like(X)
     for i in range(len(lambdas)):
-        i -= 1
+        # i -= 1
         if lambdas[i] == 0:
             print('X[:, :, i]', X[:, :, i])
             boxcox_X[:, :, i] = np.log(X[:, :, i])
@@ -52,7 +52,6 @@ def boxcox_transformation_mixed(X, lambdas):
     """
     boxcox_X = np.zeros_like(X)
     for i in range(len(lambdas)):
-        i -= 1
         if lambdas[i] == 0:
             print('X[:, :, i]', X[:, :, :, i])
             boxcox_X[:, :, :, i] = np.log(X[:, :, :, i])

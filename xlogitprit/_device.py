@@ -21,7 +21,6 @@ class Device():
             self._using_gpu = True
         else:
             print("CuPy not found. Verify it is properly installed")
-    
     def disable_gpu_acceleration(self):
         self.np = numpy
         self._using_gpu = False
