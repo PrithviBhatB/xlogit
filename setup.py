@@ -2,16 +2,16 @@ import setuptools
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
-setuptools.setup(name='xlogit',
-      version='0.0.1',
+setuptools.setup(name='xlogitprit',
+      version='0.0.2',
       description='A Python package for GPU-accelerated estimation of mixed logit models.',
       long_description = long_description,
       long_description_content_type="text/markdown",
-      url='https://github.com/arteagac/xlogit',
-      author='Cristian Arteaga',
-      author_email='cristiandavidarteaga@gmail.com',
+      url='https://github.com/PrithviBhatB/xlogit',
+      author='Ryan Kelly',
+      author_email='ryan@kiiii.com',
       license='MIT',
-      packages=['xlogit'],
+      packages=['xlogitprit'],
       zip_safe=False,
       python_requires='>=3.5',
       install_requires=[

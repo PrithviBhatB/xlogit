@@ -115,9 +115,11 @@ class ChoiceModel(ABC):
     def _setup_design_matrix(self, X):
         J = len(self.alternatives)
         N = P_N =  int(len(X)/J)
+        # print('P_N', P_N)
         self.P = 0
         self.N = N
         self.J = J
+        # print('self.panel', self.panel)
         if self.panel is not None:
             # Panel size.
             self.P_i = ((np.unique(self.panel, return_counts=True)[1])/J).astype(int)
@@ -204,6 +206,7 @@ class ChoiceModel(ABC):
             Xas = X[:, aspos]
             self.Xas = Xas.reshape(P_N, self.J, -1)
 
+
         self.Xr = None
         if len(self.randvars):
             Xr = X[:, randpos]
@@ -226,66 +229,115 @@ class ChoiceModel(ABC):
                 Xtrans = X[:, transpos]
                 self.Xtrans = Xtrans[:, len(transpos) - 1]
 
+        X = X.reshape(-1, len(self.alternatives), len(self.varnames))
+        print('Xafterreshape', X.shape)
         # Set design matrix based on existance of asvars and isvars
-        self.Xf = []
-        if len(self.asvars) and len(self.isvars):
-            self.Xf = np.dstack((self.Xis, self.Xas))
-        elif len(self.asvars):
-            self.Xf = self.Xas
-        elif len(self.isvars):
-            self.Xf = self.Xis
+        #TODO: CAN I COMMENT THIS OUT??
+        # self.Xf = []
+        # print('Xfinithey')
+        # if len(self.asvars) and len(self.isvars):
+        #     print('111111')
+        #     X = np.dstack((self.Xis, self.Xas))
+        # elif len(self.asvars):
+        #     print('222222')
+        #     X = self.Xas
+        # elif len(self.isvars):
+        #     print('333333')
+        #     X = self.Xis
+        print('Xhere', X.shape)
+        print('Xr', self.Xr.shape)
+        # print('N', self.N, 'P', self.P, 'J', self.J, 'K', K)
+        # X = X.reshape(N, P, J, K)
 
+        def _balance_panels(self, X, y, panels):
+            """Balance panels if necessary and produce a new version of X and y.
 
-        def create_final_matrix(design_matrix, num_col, isZero=True):
-            X_Final = np.zeros((self.N, self.P, self.J, num_col)) if isZero \
-                      else np.ones((self.N, self.P, self.J, num_col))
-            k = 0
-            while k < P_N:
-                for i in range(self.N):
-                    for j in range(self.P_i[i]):
-                        X_Final[i,j,:,:] = design_matrix[k,:,:]
-                        k = k+1
-            return(X_Final)
-
-        if (self.Kf + self.Kr + self.Kftrans + self.Krtrans) > 0:
-            # TODO: BALANCE PANELS
-            if self.Kf !=0:
-                self.Xf = create_final_matrix(self.Xf, self.Kf) #Data for fixed coeff
-            if self.Kr !=0:
-                self.Xr = create_final_matrix(self.Xr,self.Kr) #Data for random coeff
-            if self.Kftrans != 0:
-                self.Xf_trans = create_final_matrix(self.Xf_trans, self.Kftrans) #Data for fixed coeff
-            if self.Krtrans != 0:
-                self.Xr_trans = create_final_matrix(self.Xr_trans, self.Krtrans) #Data for random coeff
-        self.y = create_final_matrix((self.y.reshape(P_N, self.J, 1)), 1)
-        
-        
-        def _balance_panels(self, X, y, panel):
-            _, p_obs = np.unique(self.panel, return_counts=True)
+            If panels are already balanced, the same X and y are returned. This
+            also returns panel_info, which keeps track of the panels that needed
+            balancing.
+            """
+            _, J, K = X.shape
+            # print('prebalancedX', X)
+            _, p_obs = np.unique(panels, return_counts=True)
             p_obs = (p_obs/J).astype(int)
-            if X is None:
-                return None
+            N = len(p_obs)  # This is the new N after accounting for panels
+            P = np.max(p_obs)  # Panel length for all records
+            print('X.shape', X.shape)
             if not np.all(p_obs[0] == p_obs):  # Balancing needed
-                Xbal = np.zeros_like(X)
-                self.panel_info = np.zeros((self.N, self.P))
-                cum_p = 1 # Cumulative sum of n_obs at each iteration
-                # TODO: Why = 1 works? (but original = 0 doesn't)
+                y = y.reshape(X.shape[0], J, 1)
+                Xbal, ybal = np.zeros((N*P, J, K)), np.zeros((N*P, J, 1))
+                print('Xbal', Xbal.shape)
+                panel_info = np.zeros((N, P))
+                cum_p = 0  # Cumulative sum of n_obs at every iteration
                 for n, p in enumerate(p_obs):
-                    Xbal[n*self.P:n*self.P +p, :, :, :] = X[cum_p:cum_p + p, :, :, :]
-                    self.panel_info[n, :p] = np.ones(p)
+                    # Copy data from original to balanced version
+                    Xbal[n*P:n*P + p, :, :] = X[cum_p:cum_p + p, :, :]
+                    ybal[n*P:n*P + p, :, :] = y[cum_p:cum_p + p, :, :]
+                    panel_info[n, :p] = np.ones(p)
                     cum_p += p
-            else: # No balancing needed
-                Xbal = X
-                self.panel_info = np.ones((self.N, self.P))
-            return Xbal
 
-        if (self.Kf > 0):
-            self.Xf = _balance_panels(self, self.Xf, self.y, self.panel)
-        self.Xr = _balance_panels(self, self.Xr, self.y, self.panel)
-        self.Xf_trans = _balance_panels(self, self.Xf_trans, self.y, self.panel)
-        self.Xr_trans = _balance_panels(self, self.Xr_trans, self.y, self.panel)
-        self.y = _balance_panels(self, self.y, self.y, self.panel)
+            else:  # No balancing needed
+                Xbal, ybal = X, y
+                panel_info = np.ones((N, P))
+            # print('postbalancedX', Xbal)
+            print('finalXbalshape', Xbal.shape)
+            return Xbal, ybal, panel_info
 
+        # if panel is not None:  # If panel
+        #     X, y, self.panel_info = _balance_panels(X, y, panels)
+
+        # def _balance_panels_y(self, X, y, panel):
+        #     _, J, K = X.shape
+        #     _, p_obs = np.unique(panels, return_counts=True)
+        #     p_obs = (p_obs/J).astype(int)
+        #     N = len(p_obs)  # This is the new N after accounting for panels
+        #     P = np.max(p_obs)  # Panel length for all records
+        #     if not np.all(p_obs[0] == p_obs):  # Balancing needed
+        #         y = y.reshape(X.shape[0], J, 1)
+        #     ybal = np.zeros((N*P, J, 1))
+        #     cum_p = 0  # Cumulative sum of n_obs at every iteration
+        #     for n, p in enumerate(p_obs):
+
+
+
+        # temp_Xr = self.Xr
+        # if (self.Kf > 0):
+        #     self.Xf, _ = _balance_panels(self, self.Xf, self.y, self.panel)
+        # if (self.Kr > 0):
+        #     self.Xr, _ = _balance_panels(self, self.Xr, self.y, self.panel)
+        # if (self.Kftrans > 0):
+        #     self.Xf_trans, _ = _balance_panels(self, self.Xf_trans, self.y, self.panel)
+        # if (self.Krtrans > 0):
+        #     self.Xr_trans, _ = _balance_panels(self, self.Xr_trans, self.y, self.panel)
+        # _, self.y = _balance_panels(self, temp_Xr, self.y, self.panel) #TODO: REPLACE XR
+        # print('ypostbalance', self.y)
+        # def create_final_matrix(design_matrix, num_col, isZero=True):
+        #     X_Final = np.zeros((self.N, self.P, self.J, num_col)) if isZero \
+        #               else np.ones((self.N, self.P, self.J, num_col))
+        #     k = 0
+        #     while k < P_N:
+        #         for i in range(self.N):
+        #             for j in range(self.P_i[i]):
+        #                 # print('designmat', design_matrix)
+        #                 X_Final[i,j,:,:] = design_matrix[k,:,:]
+        #                 k = k+1
+        #     return(X_Final)
+
+        # if (self.Kf + self.Kr + self.Kftrans + self.Krtrans) > 0:
+        #     # TODO: BALANCE PANELS
+        #     if self.Kf !=0:
+        #         self.Xf = create_final_matrix(self.Xf, self.Kf) #Data for fixed coeff
+        #     if self.Kr !=0:
+        #         self.Xr = create_final_matrix(self.Xr,self.Kr) #Data for random coeff
+        #     if self.Kftrans != 0:
+        #         self.Xf_trans = create_final_matrix(self.Xf_trans, self.Kftrans) #Data for fixed coeff
+        #     if self.Krtrans != 0:
+        #         self.Xr_trans = create_final_matrix(self.Xr_trans, self.Krtrans) #Data for random coeff
+        # # print('PN_N', self.N, 'self.P', self.P, 'self.J', self.J)
+        # self.y = self.y.reshape(self.N, self.P, self.J, 1)
+        # print('ypostreshape', self.y)
+        # print('panelifno', self.panel_info)
+        # self.y = create_final_matrix((self.y.reshape(P_N, self., 1)), 1)
 
         intercept_names = ["_intercept.{}".format(j) for j in self.alternatives
                             if j != self.base_alt] if self.fit_intercept else []
