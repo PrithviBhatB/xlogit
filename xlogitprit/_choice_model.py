@@ -72,7 +72,7 @@ class ChoiceModel(ABC):
         self.isvars = [] if isvars is None else isvars
         self.transvars = [] if transvars is None else transvars
         self.randvars = [] if randvars is None else randvars
-        self.asvars = [v for v in varnames if ((v not in self.isvars) and (v not in self.transvars) and (v not in self.randvars))]
+        self.asvars = [v for v in varnames if ((v not in self.isvars))] #TODO: xlogit or prithvi here? and (v not in self.transvars) and (v not in self.randvars))]
         self.randtransvars = [] if transvars is None else []
         self.fixedtransvars = [] if transvars is None else []
         self.alternatives = np.unique(alt)
@@ -140,12 +140,23 @@ class ChoiceModel(ABC):
             self.isvars = np.insert(np.array(self.isvars, dtype="<U16"), 0, '_inter')
             self.varnames = np.insert(np.array(self.varnames, dtype="<U16"), 0, '_inter')
             self.initialData = np.hstack((np.ones(J*N)[:, None], self.initialData))
+            print('Xprestack',  X.shape)   
+            print('JJJJ', J)
             X = np.hstack((np.ones(J*N)[:, None], X))
-        
+            print('Xafterstack',  X.shape)
+            self.fxidx = np.insert(np.array(self.fxidx, dtype="bool_"), 0, [True, True, True]) #TODO: FLEXIBLE BOOLS
+            self.rvidx = np.insert(np.array(self.rvidx, dtype="bool_"), 0, [False, False, False])
+            self.fxtransidx = np.insert(np.array(self.fxtransidx, dtype="bool_"), 0, [False, False, False])
+            self.rvtransidx = np.insert(np.array(self.rvtransidx, dtype="bool_"), 0, [False, False, False])
+
         if self.transformation == "boxcox":
             self.transFunc = boxcox_transformation
             self.transform_deriv = boxcox_param_deriv
 
+        #TODO better placement but works here
+        self.Kf = sum(self.fxidx)
+        print('self.fxidx', self.fxidx)
+        print('self.Kf', self.Kf)
         # P_i = np.ones([self.N]).astype(int)
         S = np.zeros((self.N, self.P, self.J))
         for i in range(self.N):
@@ -164,7 +175,7 @@ class ChoiceModel(ABC):
         if (isinstance(self.correlation, list)):
             self.correlationpos = [self.randvars.index(i) for i in self.correlation]
             self.uncorrelatedpos = [self.randvars.index(i) for i in self.randvars if i not in self.correlation]
-        self.Kf = (J-1)*len(ispos) + len(aspos) #Number of fixed coefficients
+        # self.Kf = (J-1)*len(ispos) #Number of fixed coefficients
         self.Kr = len(randpos)                     #Number of random coefficients
         self.Kftrans = len(fixedtranspos)   #Number of fixed coefficients of bc transformed vars
         self.Krtrans= len(randtranspos)   #Number of random coefficients of bc transformed vars
@@ -186,7 +197,7 @@ class ChoiceModel(ABC):
                 self.Kchol =  (len(self.randvars) * (len(self.randvars)+1))/2
         # Create design matrix
         # For individual specific variables
-        self.Xis = None
+        Xis = None
         if len(self.isvars):
             # Create a dummy individual specific variables for the alt
             dummy = np.tile(np.eye(J), reps=(P_N, 1))
@@ -197,55 +208,40 @@ class ChoiceModel(ABC):
             Xis = X[:, ispos]
             # Multiply dummy representation by the individual specific data
             Xis = np.einsum('nj,nk->njk', Xis, dummy)
-            self.Xis = Xis.reshape(P_N, self.J, (self.J-1)*len(ispos))
+            Xis = Xis.reshape(P_N, self.J, (self.J-1)*len(ispos))
         else:
-            self.Xis = np.array([])
+            Xis = np.array([])
         # For alternative specific variables
-        self.Xas = None
+        Xas = None
         if asvars:
             Xas = X[:, aspos]
-            self.Xas = Xas.reshape(P_N, self.J, -1)
+            Xas = Xas.reshape(N, J, -1)
+            print('Xashere', Xas.shape)
 
 
-        self.Xr = None
-        if len(self.randvars):
-            Xr = X[:, randpos]
-            self.Xr = Xr.reshape(P_N, self.J, -1)
-
-        self.Xf_trans = None
-        self.Xr_trans = None
-        self.Xtrans = None
-        #  For variables to transform
-        if len(transvars):
-            if (self.Krtrans):
-                    Xr_trans = X[:, randtranspos]
-                    self.Xr_trans = Xr_trans.reshape(P_N, J, -1)
-
-            if (self.Kftrans):
-                Xf_trans = X[:, fixedtranspos]
-                self.Xf_trans = Xf_trans.reshape(P_N, J, -1)
-
-            if(not len(self.randtransvars) and not len(self.fixedtransvars)):
-                Xtrans = X[:, transpos]
-                self.Xtrans = Xtrans[:, len(transpos) - 1]
-
-        X = X.reshape(-1, len(self.alternatives), len(self.varnames))
-        print('Xafterreshape', X.shape)
         # Set design matrix based on existance of asvars and isvars
         #TODO: CAN I COMMENT THIS OUT??
         # self.Xf = []
         # print('Xfinithey')
-        # if len(self.asvars) and len(self.isvars):
-        #     print('111111')
-        #     X = np.dstack((self.Xis, self.Xas))
-        # elif len(self.asvars):
-        #     print('222222')
-        #     X = self.Xas
-        # elif len(self.isvars):
-        #     print('333333')
-        #     X = self.Xis
+        print('self.asvars', self.asvars, 'self.isvars', self.isvars)
+        if len(self.asvars) and len(self.isvars):
+            print('111111')
+            X = np.dstack((Xis, Xas))
+        elif len(self.asvars):
+            print('222222')
+            X = Xas
+        elif len(self.isvars):
+            print('333333')
+            X = Xis
         print('Xhere', X.shape)
-        print('Xr', self.Xr.shape)
+        print('self.varnames', self.varnames)
+        print('isvars', isvars)
+        # x_varname_length = len(self.varnames) if not self.fit_intercept \
+        #                    else (len(self.varnames) - 1)+(J-1)
+        # print('x_varname_length', x_varname_length)
+        print('self.N', self.N)
+        # X = X.reshape(self.N, len(self.alternatives), x_varname_length)
+        print('Xafter')
         # print('N', self.N, 'P', self.P, 'J', self.J, 'K', K)
         # X = X.reshape(N, P, J, K)
 
@@ -343,22 +339,25 @@ class ChoiceModel(ABC):
                             if j != self.base_alt] if self.fit_intercept else []
         names = ["{}.{}".format(isvar, j) for isvar in isvars
                  for j in self.alternatives if j != self.base_alt]
+        print('namesnames', names)
         lambda_names_fixed = ["lambda.{}".format(transvar) for transvar in fixedtransvars]
         lambda_names_rand = ["lambda.{}".format(transvar) for transvar in randtransvars]
         randvars = [x for x in self.randvars]
+        asvars_names = [x for x in asvars if (x not in self.randvars) and (x not in fixedtransvars) and (x not in randtransvars)  ]
         chol =  ["chol." + self.randvars[self.correlationpos[i]] + "." + \
                     self.randvars[self.correlationpos[j]] for i \
                     in range(self.correlationLength) for j in range(i+1) ]
         br_w_names = ["sd." + x for x in self.randvars]
+        print('br_w_names', br_w_names)
         if (isinstance(self.correlation, list)): #if not all r.v.s correlated...
             sd_uncorrelated_pos = [self.varnames.tolist().index(x) for x in self.varnames 
                         if x not in self.correlation and x in self.randvars]
             br_w_names = np.char.add("sd.", self.varnames[sd_uncorrelated_pos])
         sd_rand_trans = np.char.add("sd.", self.varnames[randtranspos])
-        names = np.concatenate((intercept_names, names, asvars, randvars, chol, br_w_names,
+        names = np.concatenate((intercept_names, names, asvars_names, randvars, chol, br_w_names,
         fixedtransvars, lambda_names_fixed, randtransvars, sd_rand_trans, lambda_names_rand))
         names = np.array(names)
-
+        
         return X, names
 
     def _check_long_format_consistency(self, id, alt, sorted_idx):

@@ -36,6 +36,7 @@ class MixedLogit(ChoiceModel):
                       fit_intercept, transformation, maxiter, panel, correlation, randvars)
         rvpos = [self.varnames.index(i) for i in self.randvars]
         randtranspos = [self.varnames.__add__index(i) for i in self.randtransvars] # bc transformed variables with random coeffs
+        self.randvarsdict = randvars
         self.randvars = [x for x in self.randvars if x not in transvars] # random variables not transformed
         self.randtransvars = [x for x in transvars if (x in randvars) and (x not in self.randvars)]
         self.fixedtransvars = [x for x in transvars if x not in self.randtransvars]
@@ -81,9 +82,16 @@ class MixedLogit(ChoiceModel):
         print('Xaftersetupshape', X.shape)
         J, K, R = X.shape[1], X.shape[2], n_draws
 
+        if self.transvars is not None and self.transformation is None:
+            # if transvars provided and no specified transformation function
+            # give default to boxcox
+            self.transformation = "boxcox"
+
+
         if self.transformation == "boxcox":
             self.transFunc = boxcox_transformation_mixed
             self.transform_deriv = boxcox_param_deriv_mixed
+
         # N = self.N
         # P = self.P
         R = n_draws
@@ -114,9 +122,9 @@ class MixedLogit(ChoiceModel):
 
         # Generate draws
         draws, drawstrans = self._generate_draws(self.N, R, halton)  # (N,Kr,R)
-        n_coeff = self.Kf + 2*self.Kr + 2*self.Kftrans + 3*self.Krtrans
+        n_coeff = self.Kf + self.Kr + self.Kchol + self.Kbw + 2*self.Kftrans + 3*self.Krtrans
         if init_coeff is None:
-            betas = np.repeat(.1, n_coeff)
+            betas = np.repeat(.0, n_coeff)
             # betas = np.concatenate((np.repeat(-0.1, self.Kf), np.repeat(.1, self.Kr),
             #          np.repeat(0.2, self.Kchol), np.repeat(.1, self.Kbw), np.repeat(0.2, 2*self.Kftrans), np.repeat(0.2, 2*self.Krtrans), np.repeat(1, self.Krtrans)))
         else:
@@ -186,6 +194,7 @@ class MixedLogit(ChoiceModel):
         # for both non-transformed and transformed variables
         # and random beta cholesky factors (chol)
         print('betasdebug', betas)
+        print('self.Kbw', self.Kbw)
         if dev.using_gpu:
             betas = dev.to_gpu(betas)
 
@@ -201,10 +210,13 @@ class MixedLogit(ChoiceModel):
             var_list[beta_segment_names[count]] = betas[prev_index:i]
         
         Bf, Br_b, chol, Br_w, Bftrans, flmbda, Brtrans_b, Brtrans_w, rlmda  = var_list.values()
-
-        print('Br_b', Br_b, 'Br_w', Br_w)
+        print('var_list.values()', var_list.values())
+        print('flmbda', flmbda)
+        print('self.correlationLength', self.correlationLength, 'self.Kr', self.Kr)
+        print('chol', chol)
         chol_mat = np.zeros((self.correlationLength, self.correlationLength))
         indices = np.tril_indices(self.correlationLength)
+        print('indices', indices)
         chol_mat[indices] = chol
         chol_mat_temp = np.zeros((self.Kr, self.Kr))
         chol_mat_temp[:self.correlationLength, :self.correlationLength] = chol_mat
@@ -219,12 +231,16 @@ class MixedLogit(ChoiceModel):
         # Estimating the linear utility specification (U = sum of Xb)
         V = np.zeros((self.N, self.P, self.J, self.n_draws))
         print('X', X.shape)
+        print('self.fxidx', self.fxidx)
         Xf = X[:, :, :, self.fxidx]
         Xftrans = X[:, :, :, self.fxtransidx]
         Xr = X[:, :, :, self.rvidx]
         Xrtrans = X[:, :, :, self.rvtransidx]
 
+        print('Xfafter', Xf.shape)
+
         if self.Kf != 0:
+            print('Bf', Bf)
             XBf = np.einsum('npjk,k -> npj', Xf, Bf)
             print('XBf', XBf.shape)
             V += XBf[:, :, :, None]#*self.S[:, :, :, None]
@@ -233,10 +249,8 @@ class MixedLogit(ChoiceModel):
             print('drawshere', draws)
             print('Br_w[None, :, None]', Br_w[None, :, None])
             print('Br_b', Br_b)
-            Br = Br_b[None, :, None]  + draws*Br_w[None, :, None]#+ np.matmul(chol_mat, draws)
-            print('betas_random', Br)
+            Br = Br_b[None, :, None]  + np.matmul(chol_mat, draws) #+ draws*Br_w[None, :, None]?
             Br = self._apply_distribution(Br, self.rvdist)
-            print('betas_random_final', Br)
             XBr = np.einsum('npjk, nkr -> npjr', Xr, Br) # (N, P, J, R)
             print('XBr', XBr.shape)
             # print(1/0)
@@ -257,11 +271,16 @@ class MixedLogit(ChoiceModel):
         if self.Krtrans != 0:
             # creating the random coeffs
             Brtrans = Brtrans_b[None, :, None] + drawstrans[:, 0:self.Krtrans, :] * Brtrans_w[None, :, None]  # TODO: draws BC!
+            print('Brtrans1', Brtrans.shape)
+            print('self.rvtransdist', self.rvtransdist)
             Brtrans = self._apply_distribution(Brtrans, self.rvtransdist)
+            print('Brtrans2', Brtrans.shape)
             # applying transformation 
             Xrtrans_lmda = self.transFunc(Xrtrans, rlmda)
-            Xrtrans_lmda[np.isneginf(Xrtrans_lmda)] = -1e+10
-            Xbr_trans = np.einsum('npjk, nkr -> npjr', Xrtrans_lmda, Brtrans)
+            # Xrtrans_lmda[np.isneginf(Xrtrans_lmda)] = -1e+10
+            print('Xrtrans_lmda', Xrtrans_lmda.shape)
+            print('Brtrans', Brtrans.shape)
+            Xbr_trans = np.einsum('npjk, nkr -> npjr', Xrtrans_lmda, Brtrans) # (N, P, J, R)
             # combining utilities
             V += Xbr_trans # (N, P, J, R)
 
@@ -313,7 +332,7 @@ class MixedLogit(ChoiceModel):
         # if random coef. is lognormally dist:
         # gr_b = (obs. prob minus pred. prob.) * obs. var. * rand draw * der(R.V.)
         if self.Kr != 0:
-            der = self._compute_derivatives(Br, draws, K=self.Kr)
+            der = self._compute_derivatives(betas, draws)
             print('der', der)
             print('ymp', ymp)
             gr_b = np.einsum('npjr, npjk -> nkr', ymp, Xr)*der # (N, Kr, R)
@@ -332,7 +351,7 @@ class MixedLogit(ChoiceModel):
             X_tril_idx = np.array(np.concatenate((X_tril_idx, range_var)))
             draws_tril_idx = draws_tril_idx.astype(int)
             X_tril_idx = X_tril_idx.astype(int) #TODO: GOBACK AND FIX THIS DRAWS IDX STUFF
-            gr_w =  gr_b*draws #gr_b[:, X_tril_idx, :]*draws[:, draws_tril_idx, :] # (N, P, Kr, R)
+            gr_w =  gr_b[:, X_tril_idx, :]*draws[:, draws_tril_idx, :] # (N, P, Kr, R)
             print('gr_w', gr_w)
             gr_b = (gr_b*pch[:, None, :]).mean(axis=2)/lik[:, None]  # (N,Kr)
             gr_w = (gr_w*pch[:, None, :]).mean(axis=2)/lik[:, None]  # (N,Kr)
@@ -340,27 +359,29 @@ class MixedLogit(ChoiceModel):
             g = np.concatenate((g, gr_b, gr_w), axis = 1) if g.size else np.concatenate((gr_b, gr_w), axis = 1) 
             print('gtest', g)
         # For Box-Cox vars
-        print('gpregf', g.shape)
+        print('betas_random', g.shape)
         if len(self.transvars) > 0:
             if self.Kftrans:  # with fixed params
                 gftrans = np.einsum('npjr, npjk -> nkr', ymp, Xftrans_lmda) # (N, Kf, R)
-
+                print('gftransfirst', gftrans.shape)
                 # for the lambda param
                 # gradient = (obs. prob - pred. prod) * transformed obs. var
+                print('Xftrans', Xftrans.shape)
                 der_Xftrans_lmda = self.transform_deriv(Xftrans, flmbda)
+                print('der_Xftrans_lmda1', der_Xftrans_lmda.shape)
                 der_Xftrans_lmda[np.isposinf(der_Xftrans_lmda)] = 1e+30
                 der_Xftrans_lmda[np.isneginf(der_Xftrans_lmda)] = 1e-30
                 der_Xftrans_lmda[np.isnan(der_Xftrans_lmda)] = 1e-30 # TODO 
                 print('der_Xftrans_lmda', der_Xftrans_lmda.shape)
                 print('Bftrans', Bftrans)
-                der_Xbftrans = np.einsum('npjk,k -> npj', der_Xftrans_lmda, Bftrans)
+                der_Xbftrans = np.einsum('npjk,k -> npk', der_Xftrans_lmda, Bftrans)
                 print('ymp', ymp.shape)
                 print('der_Xbftrans', der_Xbftrans.shape)
-                gftrans_lmda = np.einsum('npjr, npj -> npr', ymp, der_Xbftrans)
+                gftrans_lmda = np.einsum('npjr,npk -> nkr', ymp, der_Xbftrans) # (N, Kfbc, R)
                 gftrans = (gftrans*pch[:, None, :]).mean(axis=2)/lik[:, None]
                 print('gftrans_lmdapre', gftrans_lmda.shape)
-                #TODO: WHY IS GFTRANS 12 LONG NOT 2??
-                gftrans_lmda = (gftrans_lmda[:,0:2]*pch[:, None, :]).mean(axis=2)/lik[:, None]
+
+                gftrans_lmda = (gftrans_lmda*pch[:, None, :]).mean(axis=2)/lik[:, None]
                 print('gftransshape', gftrans.shape)
                 print('gftrans_lmda', gftrans_lmda.shape)
                 g = np.concatenate((g, gftrans, gftrans_lmda), axis = 1) if g.size \
@@ -523,11 +544,15 @@ class MixedLogit(ChoiceModel):
 
     def _compute_derivatives(self, betas, draws, dist=None, K=None):
         N, R = draws.shape[0], draws.shape[2]
+        print('N', N, 'R', R)
         Kr = K if K else self.Kr
+        print('Kr', Kr)
         der = dev.np.ones((N, Kr, R))
+        print('der', der.shape)
         dist = dist if dist else self.rvdist
         if any(set(dist).intersection(['ln', 'tn'])):  # If any ln or tn
             _, betas_random = self._transform_betas(betas, draws)
+            print('betas_randomv2', betas_random.shape)
             for k, dist in enumerate(dist):
                 if dist == 'ln':
                     der[:, k, :] = betas_random[:, k, :]
@@ -535,13 +560,33 @@ class MixedLogit(ChoiceModel):
                     der[:, k, :] = 1*(betas_random[:, k, :] > 0)
         return der
 
-    def _transform_betas(self, betas, draw, trans=False):
+    # def _prithvi_compute_derivatives(self, betas_random, draws):
+    #     N, R = draws.shape[0], draws.shape[2]
+    #     der = np.ones((N, self.Kr, R))
+    #     for k, dis in enumerate(self.rvdist):
+    #         if dis == 'ln':
+    #             der[:, k, :] = betas_random[:, k, :]
+            
+    #     return der
+
+    def _transform_betas(self, betas, draws, trans=False):
+        """Compute the products between the betas and the random coefficients.
+
+        This method also applies the associated mixing distributions
+        """
         # Extract coeffiecients from betas array
-        Kf = len(betas) - 2*Kr  # Number of fixed coeff
+        print('betas', betas.shape)
+        Kf = self.Kf # Number of fixed coeff
         betas_fixed = betas[0:Kf]  # First Kf positions
-        br_mean, br_sd = betas[Kf:Kf+Kr], betas[Kf+Kr:]  # Remaining positions
+        br_mean, br_sd = betas[Kf:Kf+self.Kr], betas[Kf+self.Kr+self.Kchol:Kf+self.Kr+self.Kchol+self.Kbw]  # Remaining positions
         # Compute: betas = mean + sd*draws
+        print('br_mean[None, :, None]', br_mean[None, :, None].shape)
+        print('drawsdraws', draws.shape)
+        print('br_sd[None, :, None]', br_sd[None, :, None].shape)
+        # print('randvars.values()', self.randvarsdict.values())
+        #TODO: Consider randtrans?
         betas_random = br_mean[None, :, None] + draws*br_sd[None, :, None]
+        print('betas_randompreapply', betas_random.shape)
         betas_random = self._apply_distribution(betas_random, draws)
         return betas_fixed, betas_random
 
@@ -553,14 +598,14 @@ class MixedLogit(ChoiceModel):
                                            np.sum(self.rvidx))
             if self.randtransvars:
                 drawstrans = self._get_halton_draws(sample_size, n_draws,
-                                           np.sum(self.rvtransdist))
+                                           np.sum(self.rvtransidx))
         else:
             if self.randvars:
                 draws = self._get_random_draws(sample_size, n_draws,
                                            np.sum(self.rvdist))
             if self.randtransvars:          
                 drawstrans = self._get_random_draws(sample_size, n_draws,
-                                            np.sum(self.rvtransdist))
+                                            np.sum(self.rvtransidx))
         print('self.rvdist', self.rvdist)
         self.rvdist = [x for x in self.rvdist if x is not False] #remove False to allow better enumeration
         for k, dist in enumerate(self.rvdist):

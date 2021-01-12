@@ -13,11 +13,12 @@ model = MixedLogit()
 model.fit(X, y,
           varnames,
           alt=alt,
-          randvars={'pf': 'n', 'cl': 'n', 'loc': 'n', 'wk':'n', 'tod':'n','seas':'n'},
-          # transformation="boxcox",
-          # transvars=['pf', 'loc'],
-          correlation=True,
+          randvars={'cl': 'n', 'loc': 'n', 'wk':'n', 'tod':'n','seas':'n'},
+          transformation="boxcox",
+          transvars=['cl', 'loc', 'wk'],
+          # correlation=True,
           panel=df.id.values,
+          # halton=False,
           # method='L-BFGS-B',
           n_draws = 600)
 model.summary()

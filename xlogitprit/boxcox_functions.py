@@ -8,11 +8,11 @@ def boxcox_transformation(X, lambdas):
 
     returns:
     """
+    #TODO: CHECK
     boxcox_X = np.zeros_like(X)
     for i in range(len(lambdas)):
         # i -= 1
         if lambdas[i] == 0:
-            print('X[:, :, i]', X[:, :, i])
             boxcox_X[:, :, i] = np.log(X[:, :, i])
         else:
             boxcox_X[:, :, i] = np.nan_to_num((np.power(X[:, :, i], lambdas[i]) - 1) /
@@ -28,6 +28,7 @@ def boxcox_param_deriv(X, lambdas):
 
     returns:
     """
+    #TODO: CHECK
     der_boxcox_X = np.zeros_like(X)
     for i in range(len(lambdas)):
         i -= 1
@@ -43,40 +44,36 @@ def boxcox_param_deriv(X, lambdas):
     return der_boxcox_X
 
 
-def boxcox_transformation_mixed(X, lambdas):
+def boxcox_transformation_mixed(X_matrix, lmdas):
     """boxcox transformation of variables
-    X:
-    lambdas:
+    X_matrix:
+    lmdas:
 
     returns:
     """
-    boxcox_X = np.zeros_like(X)
-    for i in range(len(lambdas)):
-        if lambdas[i] == 0:
-            print('X[:, :, i]', X[:, :, :, i])
-            boxcox_X[:, :, :, i] = np.log(X[:, :, :, i])
+    bxcx_X = np.zeros_like(X_matrix)
+    for i in range(len(lmdas)):
+        if lmdas[i] == 0:
+            bxcx_X[:,:,:,i] = np.log(X_matrix[:,:,:,i])
         else:
-            boxcox_X[:, :, :, i] = np.nan_to_num((np.power(X[:, :, :, i],
-                                                  lambdas[i]) - 1) / lambdas[i])
-    return boxcox_X
+            bxcx_X[:,:,:,i] = np.nan_to_num((np.power(X_matrix[:,:,:,i],lmdas[i])-1)/lmdas[i])
+    return bxcx_X
 
 
-def boxcox_param_deriv_mixed(X, lambdas):
+def boxcox_param_deriv_mixed(X_matrix, lmdas):
     """estimate derivative of boxcox transformation parameter (lambda)
     X:
     lambdas:
 
     returns:
     """
-    der_boxcox_X = np.zeros_like(X)
-    for i in range(len(lambdas)):
+    der_bxcx_X = np.zeros_like(X_matrix)
+    for i in range(len(lmdas)):
         i -= 1
-        if lambdas[i] == 0:
-            der_boxcox_X[:, :, :, i] = ((np.log(X[:, :, :, i])) ** 2)/2  # where??
+        if lmdas[i] == 0:
+            der_bxcx_X[:, :, :, i] = ((np.log(X_matrix[:, :, :, i])) ** 2)/2
         else:
-            der_boxcox_X[:, :, :, i] = ((lambdas[i] * np.power(X[:, :, :, i],
-                                                              lambdas[i])) *
-                                     (np.log(X[:, :, :, i]) -
-                                     (np.power(X[:, :, :, i], lambdas[i])) + 1) /
-                                     (lambdas[i] ** 2))
-    return der_boxcox_X
+            der_bxcx_X[:,:,:,i] = ((lmdas[i]*(np.power(X_matrix[:,:,:,i],lmdas[i]))
+            *np.log(X_matrix[:,:,:,i])-(np.power(X_matrix[:,:,:,i],lmdas[i]))+1)
+            /(lmdas[i]**2))
+    return der_bxcx_X
