@@ -1,18 +1,23 @@
-"""
-Implements multinomial and mixed logit models
-"""
+"""Implements multinomial and mixed logit models"""
 # pylint: disable=invalid-name
 
-from math import e
 import numpy as np
-from numpy.core.fromnumeric import var
-from numpy.lib.arraysetops import isin
 from scipy.stats import t
 import scipy as sc
 from time import time
 from abc import ABC, abstractmethod
 from .boxcox_functions import boxcox_transformation, boxcox_param_deriv
-from itertools import product as cproduct
+
+"""
+Notations
+---------
+    N : Number of choice situations
+    P : Number of observations per panels
+    J : Number of alternatives
+    K : Number of variables (Kf: fixed + non-trans, Kr: random+non-trans,
+                            Kftrans: fixed+trans, Krtrans: random+trans)
+"""
+
 
 class ChoiceModel(ABC):
     """Base class for estimation of discrete choice models"""
@@ -46,47 +51,52 @@ class ChoiceModel(ABC):
         self.numTransformedCoeffs = None
 
     @abstractmethod
-    def fit(self, X, y, varnames=None, alt=None, isvars=None, transvars=None,
-            transformation=None, id=None,
+    def fit(self, X, y, varnames=None, alts=None, isvars=None, transvars=None,
+            transformation=None, ids=None,
             weights=None, base_alt=None, fit_intercept=False, init_coeff=None,
             maxiter=2000, random_state=None, correlation=None):
         pass
 
-    def _as_array(self, X, y, varnames, alt, isvars, transvars, id, weights, panel):
+    def _as_array(self, X, y, varnames, alts, isvars, transvars, ids,
+                  weights, panels, avail):
         X = np.asarray(X)
         y = np.asarray(y)
         initialData = X
         varnames = np.asarray(varnames) if varnames is not None else None
-        alt = np.asarray(alt) if alt is not None else None
+        alts = np.asarray(alts) if alts is not None else None
         isvars = np.asarray(isvars) if isvars is not None else None
         transvars = np.asarray(transvars) if transvars is not None else []
-        id = np.asarray(id) if id is not None else None
+        ids = np.asarray(ids) if ids is not None else None
         weights = np.asarray(weights) if weights is not None else None
-        panel = np.asarray(panel) if panel is not None else None
-        return X, y, initialData, varnames, alt, isvars, transvars, id, weights, panel
+        panels = np.asarray(panels) if panels is not None else None
+        avail = np.asarray(avail) if avail is not None else None
+        return X, y, initialData, varnames, alts, isvars, transvars, ids, \
+               weights, panels, avail
 
-    def _pre_fit(self, alt, varnames, isvars, transvars, base_alt,
-                 fit_intercept, transformation, maxiter, panel, correlation=None, randvars=None):
+    def _pre_fit(self, alts, varnames, isvars, transvars, base_alt,
+                 fit_intercept, transformation, maxiter, panels,
+                correlation=None, randvars=None):
         self._reset_attributes()
         self._fit_start_time = time()
         self.isvars = [] if isvars is None else isvars
         self.transvars = [] if transvars is None else transvars
         self.randvars = [] if randvars is None else randvars
-        self.asvars = [v for v in varnames if ((v not in self.isvars))]# and (v not in self.transvars))]
+        self.asvars = [v for v in varnames if ((v not in self.isvars))] \
+                      if fit_intercept else [v for v in varnames if ((v not in self.isvars) and (v not in self.transvars))]
         self.randtransvars = [] if transvars is None else []
         self.fixedtransvars = [] if transvars is None else []
-        self.alternatives = np.unique(alt)
+        self.alternatives = np.unique(alts)
         self.numFixedCoeffs = ((len(self.alternatives)-1)*(len(self.isvars)) + len(self.asvars) # TODO: CHECK
         if not fit_intercept
         else (len(self.alternatives)-1)*(len(self.isvars)+1) + len(self.asvars)) #+ len(self.asvars))
-        self.numTransformedCoeffs = len(self.transvars)*2 #trans var + sd? + lambda
+        self.numTransformedCoeffs = len(self.transvars)*2
         self.varnames = list(varnames)  # Easier to handle with lists
         self.fit_intercept = fit_intercept
         self.transformation = transformation
         self.base_alt = self.alternatives[0] if base_alt is None else base_alt
         self.correlation = False if correlation is None else correlation
         self.maxiter = maxiter
-        self.panel = panel
+        self.panels = panels
 
     def _post_fit(self, optimization_res, coeff_names, sample_size, verbose=1):
         self.convergence = optimization_res['success']
@@ -113,14 +123,20 @@ class ChoiceModel(ABC):
             print("Message: "+optimization_res['message'])
 
     def _setup_design_matrix(self, X):
+        """Setups and reshapes input data after adding isvars and intercept.
+
+        Setup the design matrix by adding the intercept when necessary and
+        converting the isvars to a dummy representation that removes the base
+        alternative.
+        """
         J = len(self.alternatives)
         N = P_N = int(len(X)/J)
         self.P = 0
         self.N = N
         self.J = J
-        if self.panel is not None:
-            # Panel size.
-            self.P_i = ((np.unique(self.panel, return_counts=True)[1])/J).astype(int)
+        if self.panels is not None:
+            # panels size.
+            self.P_i = ((np.unique(self.panels, return_counts=True)[1])/J).astype(int)
             self.P = np.max(self.P_i)
             self.N = len(self.P_i)
         else:
@@ -190,7 +206,7 @@ class ChoiceModel(ABC):
         # For individual specific variables
         Xis = None
         if len(self.isvars):
-            # Create a dummy individual specific variables for the alt
+            # Create a dummy individual specific variables for the alts
             dummy = np.tile(np.eye(J), reps=(P_N, 1))
             # Remove base alternative
             dummy = np.delete(dummy,
@@ -213,7 +229,7 @@ class ChoiceModel(ABC):
             X = np.dstack((Xis, Xas))
         elif len(self.asvars):
             X = Xas
-        elif len(self.isvars):
+        elif (len(self.isvars)):
             X = Xis
         else:
             x_varname_length = len(self.varnames) if not self.fit_intercept \
@@ -242,39 +258,40 @@ class ChoiceModel(ABC):
                                 lambda_names_fixed, randtransvars, sd_rand_trans,
                                 lambda_names_rand))
         names = np.array(names)
+
         return X, names
 
-    def _check_long_format_consistency(self, id, alt, sorted_idx):
-        alt = alt[sorted_idx]
-        uq_alt = np.unique(alt)
-        expect_alt = np.tile(uq_alt, int(len(id)/len(uq_alt)))
-        if not np.array_equal(alt, expect_alt):
-            raise ValueError('inconsistent alt values in long format')
-        _, obs_by_id = np.unique(id, return_counts=True)
+    def _check_long_format_consistency(self, ids, alts, sorted_idx):
+        alts = alts[sorted_idx]
+        uq_alt = np.unique(alts)
+        expect_alt = np.tile(uq_alt, int(len(ids)/len(uq_alt)))
+        if not np.array_equal(alts, expect_alt):
+            raise ValueError('inconsistent alts values in long format')
+        _, obs_by_id = np.unique(ids, return_counts=True)
         if not np.all(obs_by_id/len(uq_alt)):  # Multiple of J
-            raise ValueError('inconsistent alt and id values in long format')
+            raise ValueError('inconsistent alts and ids values in long format')
 
-    def _arrange_long_format(self, X, y, id, alt, panel=None):
-        if id is not None:
-            pnl = panel if panel is not None else np.ones(len(id))
-            alt = alt.astype(str)
-            alt = alt if len(alt) == len(id)\
-                else np.tile(alt, int(len(id)/len(alt)))
-            cols = np.zeros(len(id), dtype={'names': ['panel', 'id', 'alt'],
+    def _arrange_long_format(self, X, y, ids, alts, panels=None):
+        if ids is not None:
+            pnl = panels if panels is not None else np.ones(len(ids))
+            alts = alts.astype(str)
+            alts = alts if len(alts) == len(ids)\
+                else np.tile(alts, int(len(ids)/len(alts)))
+            cols = np.zeros(len(ids), dtype={'names': ['panels', 'ids', 'alts'],
                                             'formats': ['<f4', '<f4', '<U64']})
-            cols['panel'], cols['id'], cols['alt'] = pnl, id, alt
-            sorted_idx = np.argsort(cols, order=['panel', 'id', 'alt'])
+            cols['panels'], cols['ids'], cols['alts'] = pnl, ids, alts
+            sorted_idx = np.argsort(cols, order=['panels', 'ids', 'alts'])
             X, y = X[sorted_idx], y[sorted_idx]
-            if panel is not None:
-                panel = panel[sorted_idx]
-            self._check_long_format_consistency(id, alt, sorted_idx)
-        return X, y, panel
+            if panels is not None:
+                panels = panels[sorted_idx]
+            self._check_long_format_consistency(ids, alts, sorted_idx)
+        return X, y, panels
 
-    def _validate_inputs(self, X, y, alt, varnames, isvars, id, weights, panel,
+    def _validate_inputs(self, X, y, alts, varnames, isvars, ids, weights, panels,
                          base_alt, fit_intercept, max_iterations):
         if varnames is None:
             raise ValueError('The parameter varnames is required')
-        if alt is None:
+        if alts is None:
             raise ValueError('The parameter alternatives is required')
         if X.ndim != 2:
             raise ValueError("X must be an array of two dimensions in "

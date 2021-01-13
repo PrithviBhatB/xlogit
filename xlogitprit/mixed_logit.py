@@ -11,9 +11,57 @@ from ._device import device as dev
 import numpy as np
 import itertools
 
+"""
+Notations
+---------
+    N : Number of choice situations
+    P : Number of observations per panel
+    J : Number of alternatives
+    K : Number of variables (Kf: fixed, Kr: random)
+"""
+
 
 class MixedLogit(ChoiceModel):
-    """Class for estimation of Mixed Logit Models"""
+    """Class for estimation of Mixed Logit Models
+    
+    Attributes
+    ----------
+        coeff_ : numpy array, shape (n_variables + n_randvars, )
+            Estimated coefficients
+
+        coeff_names : numpy array, shape (n_variables + n_randvars, )
+            Names of the estimated coefficients
+
+        stderr : numpy array, shape (n_variables + n_randvars, )
+            Standard errors of the estimated coefficients
+
+        zvalues : numpy array, shape (n_variables + n_randvars, )
+            Z-values for t-distribution of the estimated coefficients
+
+        pvalues : numpy array, shape (n_variables + n_randvars, )
+            P-values of the estimated coefficients
+
+        loglikelihood : float
+            Log-likelihood at the end of the estimation
+
+        convergence : bool
+            Whether convergence was reached during estimation
+
+        total_iter : int
+            Total number of iterations executed during estimation
+
+        estim_time_sec : float
+            Estimation time in seconds
+
+        sample_size : int
+            Number of samples used for estimation
+
+        aic : float
+            Akaike information criteria of the estimated model
+
+        bic : float
+            Bayesian information criteria of the estimated model
+    """
 
     def __init__(self):
         """Init Function"""
@@ -22,20 +70,91 @@ class MixedLogit(ChoiceModel):
         self.rvdist = None
 
     # X: (N, J, K)
-    def fit(self, X, y, varnames=None, alt=None, isvars=None, transvars=None,
-            id=None, transformation=None, weights=None, randvars=None,
-            panel=None, base_alt=None, fit_intercept=False, init_coeff=None, 
+    def fit(self, X, y, varnames=None, alts=None, isvars=None, transvars=None,
+            ids=None, transformation=None, weights=None, avail=None,
+            randvars=None, panels=None, base_alt=None, fit_intercept=False, init_coeff=None, 
             maxiter=2000, random_state=None, correlation=None, n_draws=200, 
             halton=True, verbose=1, method="bfgs"):
+        """Fit Mixed Logit models.
 
-        X, y, initialData, varnames, alt, isvars, transvars, id, weights, panel\
-            = self._as_array(X, y, varnames, alt, isvars, transvars, id,
-                             weights, panel)
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_variables)
+            Input data for explanatory variables in long format
 
-        self._validate_inputs(X, y, alt, varnames, isvars, id, weights, panel,
+        y : array-like, shape (n_samples,)
+            Choices (outcome) in long format
+
+        varnames : list, shape (n_variables,)
+            Names of explanatory variables that must match the number and
+            order of columns in ``X``
+
+        alts : array-like, shape (n_samples,)
+            Alternative indexes in long format or list of alternative names
+
+        isvars : list
+            Names of individual-specific variables in ``varnames``
+
+        ids : array-like, shape (n_samples,)
+            Identifiers for choice situations in long format.
+
+        weights : array-like, shape (n_variables,), default=None
+            Weights for the choice situations in long format.
+
+        avail: array-like, shape (n_samples,)
+            Availability of alternatives for the choice situations. One when
+            available or zero otherwise.
+
+        randvars : dict
+            Names (keys) and mixing distributions (values) of variables that
+            have random parameters as coefficients. Possible mixing
+            distributions are: ``'n'``: normal, ``'ln'``: lognormal,
+            ``'u'``: uniform, ``'t'``: triangular, ``'tn'``: truncated normal
+
+        panels : array-like, shape (n_samples,), default=None
+            Identifiers in long format to create panels in combination with
+            ``ids``
+
+        base_alt : int, float or str, default=None
+            Base alternative
+
+        fit_intercept : bool, default=False
+            Whether to include an intercept in the model.
+
+        init_coeff : numpy array, shape (n_variables,), default=None
+            Initial coefficients for estimation.
+
+        maxiter : int, default=200
+            Maximum number of iterations
+
+        random_state : int, default=None
+            Random seed for numpy random generator
+
+        n_draws : int, default=200
+            Number of random draws to approximate the mixing distributions of
+            the random coefficients
+
+        halton : bool, default=True
+            Whether the estimation uses halton draws.
+
+        verbose : int, default=1
+            Verbosity of messages to show during estimation. 0: No messages,
+            1: Some messages, 2: All messages
+
+
+        Returns
+        -------
+        None.
+        """
+
+        X, y, initialData, varnames, alts, isvars, transvars, ids, weights, panels, avail\
+            = self._as_array(X, y, varnames, alts, isvars, transvars, ids,
+                             weights, panels, avail)
+
+        self._validate_inputs(X, y, alts, varnames, isvars, ids, weights, panels,
                               base_alt, fit_intercept, maxiter)
-        self._pre_fit(alt, varnames, isvars, transvars, base_alt,
-                      fit_intercept, transformation, maxiter, panel,
+        self._pre_fit(alts, varnames, isvars, transvars, base_alt,
+                      fit_intercept, transformation, maxiter, panels,
                       correlation, randvars)
         self.randvarsdict = randvars
         self.randvars = [x for x in self.randvars if x not in transvars] # random variables not transformed
@@ -76,7 +195,7 @@ class MixedLogit(ChoiceModel):
         if random_state is not None:
             np.random.seed(random_state)
         self.initialData = initialData
-        X, y, panel = self._arrange_long_format(X, y, id, alt, panel)
+        X, y, panels = self._arrange_long_format(X, y, ids, alts, panels)
         y = y
         X, Xnames = self._setup_design_matrix(X)
         J, K, R = X.shape[1], X.shape[2], n_draws
@@ -92,8 +211,8 @@ class MixedLogit(ChoiceModel):
             self.transform_deriv = boxcox_param_deriv_mixed
 
         R = n_draws
-        if panel is not None:  # If panel
-            X, y, panel_info = self._balance_panels(X, y, panel)
+        if panels is not None:  # If panels
+            X, y, panel_info = self._balance_panels(X, y, panels)
             N, P = panel_info.shape
         else:
             N, P = X.shape[0], 1
@@ -109,6 +228,9 @@ class MixedLogit(ChoiceModel):
 
         if weights is not None:
             weights = weights*(N/np.sum(weights))  # Normalize weights
+
+        if avail is not None:
+            avail = avail.reshape(N, J)
 
         # Generate draws
         draws, drawstrans = self._generate_draws(self.N, R, halton)  # (N,Kr,R)
@@ -126,6 +248,8 @@ class MixedLogit(ChoiceModel):
             drawstrans = dev.to_gpu(drawstrans)
             if weights is not None:
                 weights = dev.to_gpu(weights)
+            if avail is not None:
+                avail = dev.to_gpu(avail)
             if verbose > 0:
                 print("Estimation with GPU processing enabled.")
         positive_bound = (0, 1e+30)
@@ -151,14 +275,18 @@ class MixedLogit(ChoiceModel):
 
         optimizat_res = \
             minimize(self._loglik_gradient, betas, jac=True, method=method,
-                     args=(X, y, panel_info, draws, drawstrans, weights), tol=1e-5,
+                     args=(X, y, panel_info, draws, drawstrans, weights, avail), tol=1e-5,
                      bounds=bnds,
                      options={'gtol': 1e-4, 'maxiter': maxiter,
                               'disp': verbose > 0}
                               )
         self._post_fit(optimizat_res, Xnames, N, verbose)
 
-    def _compute_probabilities(self, betas, X, panel_info, draws, drawstrans):
+    def _compute_probabilities(self, betas, X, panel_info, draws, drawstrans, avail):
+        """Compute the standard logit-based probabilities.
+
+        Random and fixed coefficients are handled separately.
+        """
         Bf, Br = self._transform_betas(betas, draws)  # Get fixed and rand coef
         X = X.reshape((self.N, self.P, self.J, self.R))
         Xf = X[:, :, :, ~self.rvidx]  # Data for fixed coefficients
@@ -172,13 +300,20 @@ class MixedLogit(ChoiceModel):
             V += XBr  # (N,P,J,R)
         V[V > 700] = 700
         eV = dev.np.exp(V)
+        if avail is not None:
+            eV = eV*avail[:, None, :, None]  # Acommodate availablity of alts.
         sumeV = dev.np.sum(eV, axis=2, keepdims=True)
         sumeV[sumeV == 0] = 1e-30
         p = eV/sumeV  # (N,P,J,R)
         p = p*panel_info[:, :, None, None]  # Zero for unbalanced panels
         return p
 
-    def _loglik_gradient(self, betas, X, y, panel_info, draws, drawstrans, weights):
+    def _loglik_gradient(self, betas, X, y, panel_info, draws, drawstrans, weights, avail):
+        """Compute the log-likelihood and gradient.
+
+        Fixed and random parameters are handled separately to
+        speed up the estimation and the results are concatenated.
+        """
         # Segregating initial values to fixed betas (Bf) and random beta means (Br_b)
         # for both non-transformed and transformed variables
         # and random beta cholesky factors (chol)
@@ -211,7 +346,6 @@ class MixedLogit(ChoiceModel):
         # Creating random coeffs using Br_b, cholesky matrix and random draws
         # Estimating the linear utility specification (U = sum of Xb)
         V = np.zeros((self.N, self.P, self.J, self.n_draws))
-
         Xf = X[:, :, :, self.fxidx]
         Xftrans = X[:, :, :, self.fxtransidx]
         Xr = X[:, :, :, self.rvidx]
@@ -250,7 +384,9 @@ class MixedLogit(ChoiceModel):
         #  Combine utilities of fixed and random variables
         V[V > 700] = 700
         # Exponent of the utility function for the logit formula
-        eV = np.exp(V)
+        eV = dev.np.exp(V)
+        if avail is not None:
+            eV = eV*avail[:, None, :, None]  # Acommodate availablity of alts.
 
         # Thresholds to avoid overflow warnings
         eV[np.isposinf(eV)] = 1e+30
@@ -258,7 +394,7 @@ class MixedLogit(ChoiceModel):
         sum_eV = np.sum(eV, axis=2, keepdims=True)
         p = np.divide(eV, sum_eV, out=np.zeros_like(eV), where=(sum_eV != 0))
         p = p*panel_info[:, :, None, None]
-        # Joint probability estimation for panel data
+        # Joint probability estimation for panels data
         pch = np.sum(y*p, axis=2) # (N, P, R)
         pch = self._prob_product_across_panels(pch, panel_info)
         # Thresholds to avoid divide by zero warnings
@@ -346,7 +482,7 @@ class MixedLogit(ChoiceModel):
                 g = np.concatenate((g, grtrans_b, grtrans_w, grtrans_lmda), axis = 1) if g.size \
                     else np.concatenate((grtrans_b, grtrans_w, grtrans_lmda), axis = 1)
 
-        # weighted average of the gradient when panel data is used
+        # weighted average of the gradient when panels data is used
        
         # Hessian estimation
         H = g.T.dot(g)
@@ -369,8 +505,8 @@ class MixedLogit(ChoiceModel):
 
     #     if dev.using_gpu:
     #         betas = dev.to_gpu(betas)
-    #     p = self._compute_probabilities(betas, X, panel_info, draws, drawstrans)
-    #     # Probability of chosen alt
+    #     p = self._compute_probabilities(betas, X, panel_info, draws, drawstrans, avail)
+    #     # Probability of chosen alts
     #     pch = (y*p).sum(axis=2)  # (N,P,R)
     #     pch = self._prob_product_across_panels(pch, panel_info)  # (N,R)
     #     # Log-likelihood
@@ -414,7 +550,7 @@ class MixedLogit(ChoiceModel):
         return np.concatenate((gr_fb, gr_w), axis=1)
 
     def _prob_product_across_panels(self, pch, panel_info):
-        if not np.all(panel_info):  # If panel unbalanced. Not all ones
+        if not np.all(panel_info):  # If panels unbalanced. Not all ones
             idx = panel_info == 0
             for i in range(pch.shape[2]):
                 pch[:, :, i][idx] = 1  # Multiply by one when unbalanced
@@ -442,7 +578,7 @@ class MixedLogit(ChoiceModel):
         _, p_obs = np.unique(panels, return_counts=True)
         p_obs = (p_obs/J).astype(int)
         N = len(p_obs)  # This is the new N after accounting for panels
-        P = np.max(p_obs)  # Panel length for all records
+        P = np.max(p_obs)  # panels length for all records
         if not np.all(p_obs[0] == p_obs):  # Balancing needed
             y = y.reshape(X.shape[0], J, 1)
             Xbal, ybal = np.zeros((N*P, J, K)), np.zeros((N*P, J, 1))
@@ -558,5 +694,5 @@ class MixedLogit(ChoiceModel):
         X = np.array([[2, 1], [1, 3], [3, 1], [2, 4]])
         y = np.array([0, 1, 0, 1])
         model = MixedLogit()
-        model.fit(X, y, varnames=["a", "b"], alt=["1", "2"], n_draws=500,
+        model.fit(X, y, varnames=["a", "b"], alts=["1", "2"], n_draws=500,
                   randvars={'a': 'n', 'b': 'n'}, maxiter=0, verbose=0)

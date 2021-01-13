@@ -12,16 +12,69 @@ from scipy.optimize import minimize
 class MultinomialLogit(ChoiceModel):
     """Class for estimation of Multinomial and Conditional Logit Models"""
 
-    def fit(self, X, y, varnames=None, alt=None, isvars=None, transvars=None, transformation=None,
-            id=None, weights=None, base_alt=None, fit_intercept=False,
+    def fit(self, X, y, varnames=None, alts=None, isvars=None, transvars=None, transformation=None,
+            ids=None, weights=None, avail=None, base_alt=None, fit_intercept=False,
             init_coeff=None, maxiter=2000, random_state=None, verbose=1):
+        """Fit multinomial and/or conditional logit models.
 
-        X, y, initialData, varnames, alt, isvars, transvars, id, weights, panel, \
-            = self._as_array(X, y, varnames, alt, isvars, transvars, id, weights, None)
-        self._validate_inputs(X, y, alt, varnames, isvars, id, weights, None,
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_variables)
+            Input data for explanatory variables in long format
+
+        y : array-like, shape (n_samples,)
+            Choices in long format
+
+        varnames : list, shape (n_variables,)
+            Names of explanatory variables that must match the number and
+            order of columns in ``X``
+
+        alts : array-like, shape (n_samples,)
+            Alternative indexes in long format or list of alternative names
+
+        isvars : list
+            Names of individual-specific variables in ``varnames``
+
+        ids : array-like, shape (n_samples,)
+            Identifiers for choice situations in long format.
+
+        weights : array-like, shape (n_variables,), default=None
+            Weights for the choice situations in long format.
+
+        avail: array-like, shape (n_samples,)
+            Availability of alternatives for the choice situations. One when
+            available or zero otherwise.
+
+        base_alt : int, float or str, default=None
+            Base alternative
+
+        fit_intercept : bool, default=False
+            Whether to include an intercept in the model.
+
+        init_coeff : numpy array, shape (n_variables,), default=None
+            Initial coefficients for estimation.
+
+        maxiter : int, default=200
+            Maximum number of iterations
+
+        random_state : int, default=None
+            Random seed for numpy random generator
+
+        verbose : int, default=1
+            Verbosity of messages to show during estimation. 0: No messages,
+            1: Some messages, 2: All messages
+
+
+        Returns
+        -------
+        None.
+        """
+        X, y, initialData, varnames, alts, isvars, transvars, ids, weights, panels, panel \
+            = self._as_array(X, y, varnames, alts, isvars, transvars, ids, weights, None, avail)
+        self._validate_inputs(X, y, alts, varnames, isvars, ids, weights, None,
                               base_alt, fit_intercept, maxiter)
 
-        self._pre_fit(alt, varnames, isvars, transvars, base_alt, fit_intercept, transformation, maxiter, panel)
+        self._pre_fit(alts, varnames, isvars, transvars, base_alt, fit_intercept, transformation, maxiter, panels)
         self.fxidx, self.fxtransidx = [], []
         for var in self.varnames:
             if var in transvars:
@@ -31,7 +84,7 @@ class MultinomialLogit(ChoiceModel):
                 self.fxtransidx.append(False)
                 self.fxidx.append(True)
 
-        X, y, panel = self._arrange_long_format(X, y, id, alt)
+        X, y, panels = self._arrange_long_format(X, y, ids, alts)
         self.y = y
         self.initialData = initialData
         if random_state is not None:
@@ -39,6 +92,9 @@ class MultinomialLogit(ChoiceModel):
         if transformation == "boxcox":
             self.transFunc = boxcox_transformation
             self.transform_deriv = boxcox_param_deriv
+
+        if avail is not None:
+            avail = avail.reshape(X.shape[0], X.shape[1])
 
         if init_coeff is None:
             betas = np.repeat(.0, self.numFixedCoeffs + self.numTransformedCoeffs)
@@ -56,10 +112,10 @@ class MultinomialLogit(ChoiceModel):
         y = y.reshape(self.N, self.J)
 
         # Call optimization routine
-        optimizat_res = self._scipy_bfgs_optimization(betas, X, y, weights, maxiter)
+        optimizat_res = self._scipy_bfgs_optimization(betas, X, y, weights, avail, maxiter)
         self._post_fit(optimizat_res, Xnames, int(1182/4), verbose)
 
-    def _compute_probabilities(self, betas, X):
+    def _compute_probabilities(self, betas, X, avail):
         transpos = [self.varnames.tolist().index(i) for i in self.transvars]  #  Position of trans vars
         if sum(transpos):
             X_trans =  self.initialData[:, transpos]
@@ -81,11 +137,13 @@ class MultinomialLogit(ChoiceModel):
         XB[np.isneginf(XB)] = 1e-30  # avoiding infs
         XB = XB.reshape(self.N, self.J)
         eXB = np.exp(XB)
+        if avail is not None:
+            eXB = eXB*avail
         p = eXB/np.sum(eXB, axis=1, keepdims=True)  # (N,J)
         return p, Xtrans_lambda
 
-    def _loglik_and_gradient(self, betas, X, y, weights):
-        p, Xtrans_lmda = self._compute_probabilities(betas, X)
+    def _loglik_and_gradient(self, betas, X, y, weights, avail):
+        p, Xtrans_lmda = self._compute_probabilities(betas, X, avail)
         # Log likelihood
         lik = np.sum(y*p, axis=1)
         loglik = np.log(lik)
@@ -124,13 +182,13 @@ class MultinomialLogit(ChoiceModel):
 
         return (-loglik, -grad, Hinv)
 
-    def _scipy_bfgs_optimization(self, betas, X, y, weights, maxiter):
-        res_init, g, Hinv = self._loglik_and_gradient(betas, X, y, weights)
-        res = minimize(self._loglik_and_gradient, betas, args=(X, y, weights), jac=True, method='BFGS', tol=1e-10, options={'gtol': 1e-10})
+    def _scipy_bfgs_optimization(self, betas, X, y, weights, avail, maxiter):
+        res_init, g, Hinv = self._loglik_and_gradient(betas, X, y, weights, avail)
+        res = minimize(self._loglik_and_gradient, betas, args=(X, y, weights, avail), jac=True, method='BFGS', tol=1e-10, options={'gtol': 1e-10})
         return res
 
-    def _bfgs_optimization(self, betas, X, y, weights, maxiter):
-        res, g, Hinv = self._loglik_and_gradient(betas, X, y, weights)
+    def _bfgs_optimization(self, betas, X, y, weights, avail, maxiter):
+        res, g, Hinv = self._loglik_and_gradient(betas, X, y, weights, avail)
         current_iteration = 0
         convergence = False
         while True:
@@ -142,7 +200,7 @@ class MultinomialLogit(ChoiceModel):
                 s = step*d
                 betas = betas + s
                 resnew, gnew, _ = self._loglik_and_gradient(betas, X, y,
-                                                            weights)
+                                                            weights, avail)
                 if resnew <= res or step < 1e-10:
                     break
 
