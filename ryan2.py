@@ -5,6 +5,11 @@ from xlogitprit import MixedLogit
 df = pd.read_csv("https://raw.githubusercontent.com/arteagac/xlogit/master/examples/data/electricity_long.csv")
 
 varnames = ["pf", "cl", "loc", "wk", "tod", "seas"]
+
+df['tod'] = -df['tod']
+df['seas'] = -df['seas']
+
+
 X = df[varnames].values
 y = df['choice'].values
 alt =[1, 2, 3, 4]
@@ -13,10 +18,11 @@ model = MixedLogit()
 model.fit(X, y,
           varnames,
           alt=alt,
-          randvars={'cl': 'n', 'loc': 'n', 'wk':'n', 'tod':'n','seas':'n'},
-          transformation="boxcox",
-          transvars=['cl', 'loc', 'wk'],
-          # correlation=True,
+          randvars={'cl': 'n', 'loc': 'n', 'wk':'u', 'tod':'ln','seas':'ln'},
+          fit_intercept=True,
+          # transformation="boxcox",
+          # transvars=['cl', 'loc', 'wk'],
+          correlation=True,
           panel=df.id.values,
           # halton=False,
           # method='L-BFGS-B',

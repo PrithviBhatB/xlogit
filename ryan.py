@@ -1,10 +1,10 @@
-from xlogit import MultinomialLogit
+from xlogitprit import MultinomialLogit
 
 import pandas as pd
 data_file = "https://raw.githubusercontent.com/arteagac/xlogit/master/examples/data/fishing_long.csv"
 df = pd.read_csv(data_file)
 
-varnames = ['income','price', 'catch']
+varnames = ['income']
 X = df[varnames].values
 y = df['choice'].values
 
@@ -13,9 +13,10 @@ model.fit(
   X,
   y,
   isvars = ['income'],
-  transvars=['catch'],
-  transformation="boxcox",
+  # transvars=['price', 'catch'],
+  # transformation="boxcox",
   alt=['beach','boat','charter','pier'],
-  varnames= varnames
+  fit_intercept=True,
+  varnames=varnames
 )
 model.summary()
