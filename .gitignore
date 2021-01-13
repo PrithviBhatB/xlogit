@@ -10,5 +10,8 @@ examples/benchmark/Rprof.out
 /*.egg-info
 
 
-#Unit tests/coverage
+# Unit tests/coverage
 .coverage
+
+# Docs builds
+/docs/build/

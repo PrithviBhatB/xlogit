@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
-from tools import Profiler, curr_ram
+from tools import Profiler, curr_ram, log
 import sys
-sys.path.append("../../")  # Path of xlogit library root folder.
+# sys.path.append("../../")  # Path of xlogit library root folder.
 from xlogit import MixedLogit
 from xlogit import device
 
@@ -20,8 +20,8 @@ if dataset == "electricity":
     y = df['choice'].values
     randvars = {'pf': 'n', 'cl': 'n', 'loc': 'n', 'wk': 'n',
                 'tod': 'n', 'seas': 'n'}
-    alt = [1, 2, 3, 4]
-    panel = df.id.values
+    alts = [1, 2, 3, 4]
+    panels = df.id.values
 
 # ==== Artificial dataset
 if dataset == "artificial":
@@ -31,8 +31,8 @@ if dataset == "artificial":
     X = df[varnames].values
     y = df['choice'].values
     randvars = {'meals': 'n', 'petfr': 'n', 'emipp': 'n'}
-    alt = [1, 2, 3]
-    panel = None
+    alts = [1, 2, 3]
+    panels = None
 
 if not use_gpu:
     device.disable_gpu_acceleration()
@@ -42,21 +42,21 @@ if profile:
 
 np.random.seed(0)
 model = MixedLogit()
-model.fit(X, y, varnames, alt=alt, n_draws=n_draws,
-          panel=panel, verbose=0, randvars=randvars)
+model.fit(X, y, varnames, alts=alts, n_draws=n_draws,
+          panels=panels, verbose=0, randvars=randvars)
 
 if profile:
     ellapsed, max_ram, max_gpu = profiler.stop()
-    print("{:6} {:7.2f} {:11.2f} {:7.3f} {:7.3f} {}"
-          .format(n_draws, ellapsed, model.loglikelihood,
-                  max_ram - ini_ram, max_gpu, model.convergence))
+    log("{:6} {:7.2f} {:11.2f} {:7.3f} {:7.3f} {}"
+        .format(n_draws, ellapsed, model.loglikelihood,
+                max_ram - ini_ram, max_gpu, model.convergence))
     profiler.export('xlogit'+('_gpu' if use_gpu else ''), dataset,
                     n_draws, ellapsed, model.loglikelihood, max_ram - ini_ram,
                     max_gpu, model.convergence)
 
 if not profile:
-    print("Variable    Estimate   Std.Err.")
+    log("Variable    Estimate   Std.Err.")
     for i in range(len(model.coeff_names)):
-        print("{:9}  {:9.5}  {:9.5}".format(model.coeff_names[i][:8],
-                                            model.coeff_[i], model.stderr[i]))
-    print("Log.Lik:   {:9.2f}".format(model.loglikelihood))
+        log("{:9}  {:9.5}  {:9.5}".format(model.coeff_names[i][:8],
+                                          model.coeff_[i], model.stderr[i]))
+    log("Log.Lik:   {:9.2f}".format(model.loglikelihood))

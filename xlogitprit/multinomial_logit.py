@@ -75,11 +75,10 @@ class MultinomialLogit(ChoiceModel):
             # applying transformations
             Xtrans_lambda = self.transFunc(X_trans, lambdas)
             XB_trans = Xtrans_lambda.dot(B_transvars)
-            # XB_trans = XB_trans.reshape(self.N, 1, self.J)
             XB += XB_trans
-        XB[XB > 700] = 700 # avoiding infs
-        XB[np.isposinf(XB)] = 1e+30 # avoiding infs
-        XB[np.isneginf(XB)] = 1e-30 # avoiding infs
+        XB[XB > 700] = 700  # avoiding infs
+        XB[np.isposinf(XB)] = 1e+30  # avoiding infs
+        XB[np.isneginf(XB)] = 1e-30  # avoiding infs
         XB = XB.reshape(self.N, self.J)
         eXB = np.exp(XB)
         p = eXB/np.sum(eXB, axis=1, keepdims=True)  # (N,J)

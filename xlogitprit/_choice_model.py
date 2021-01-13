@@ -114,7 +114,7 @@ class ChoiceModel(ABC):
 
     def _setup_design_matrix(self, X):
         J = len(self.alternatives)
-        N = P_N =  int(len(X)/J)
+        N = P_N = int(len(X)/J)
         self.P = 0
         self.N = N
         self.J = J
