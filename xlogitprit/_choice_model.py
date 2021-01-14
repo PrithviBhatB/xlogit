@@ -81,8 +81,8 @@ class ChoiceModel(ABC):
         self.isvars = [] if isvars is None else isvars
         self.transvars = [] if transvars is None else transvars
         self.randvars = [] if randvars is None else randvars
-        self.asvars = [v for v in varnames if ((v not in self.isvars))] \
-                      if fit_intercept else [v for v in varnames if ((v not in self.isvars) and (v not in self.transvars))]
+        self.asvars = [v for v in varnames if ((v not in self.isvars) and (v not in self.transvars) and (v not in self.randvars))]
+        self.asvars_construct_matrix = [v for v in varnames if ((v not in self.isvars))]
         self.randtransvars = [] if transvars is None else []
         self.fixedtransvars = [] if transvars is None else []
         self.alternatives = np.unique(alts)
@@ -144,18 +144,27 @@ class ChoiceModel(ABC):
             self.P_i = np.ones([N]).astype(int)
         isvars = self.isvars.copy()
         asvars = self.asvars.copy()
+        asvars_construct_matrix = self.asvars_construct_matrix.copy()
         transvars = self.transvars.copy()
         randvars = self.randvars.copy()
         randtransvars = self.randtransvars.copy()
         fixedtransvars = self.fixedtransvars.copy()
         varnames = self.varnames.copy()
         self.varnames = np.array(varnames)
+        ispos = [self.varnames.tolist().index(i) for i in self.isvars]  # Position of IS vars
+        if len(self.isvars) > 0:
+            self.fxidx = np.insert(np.array(self.fxidx, dtype="bool_"), 0, np.repeat(True, (J - 1)))
+            self.fxtransidx = np.insert(np.array(self.fxtransidx, dtype="bool_"), ispos, np.repeat(False, (J - 1)))
+            if hasattr(self, 'rvidx'):
+                self.rvidx = np.insert(np.array(self.rvidx, dtype="bool_"), ispos, np.repeat(False, (J - 1)))
+            if hasattr(self, 'rvtransidx'):
+                self.rvtransidx = np.insert(np.array(self.rvtransidx, dtype="bool_"), 0, np.repeat(False, (J - 1)))
         if self.fit_intercept:
             self.isvars = np.insert(np.array(self.isvars, dtype="<U16"), 0, '_inter')
             self.varnames = np.insert(np.array(self.varnames, dtype="<U16"), 0, '_inter')
             self.initialData = np.hstack((np.ones(J*N)[:, None], self.initialData))
             X = np.hstack((np.ones(J*N)[:, None], X))
-            self.fxidx = np.insert(np.array(self.fxidx, dtype="bool_"), 0, np.repeat(True, J-1)) #TODO: FLEXIBLE BOOLS
+            self.fxidx = np.insert(np.array(self.fxidx, dtype="bool_"), 0, np.repeat(True, J-1))
             if hasattr(self, 'rvidx'):
                 self.rvidx = np.insert(np.array(self.rvidx, dtype="bool_"), 0, np.repeat(False, J-1))
             self.fxtransidx = np.insert(np.array(self.fxtransidx, dtype="bool_"), 0, np.repeat(False, J-1))
@@ -171,7 +180,7 @@ class ChoiceModel(ABC):
             S[i, 0:self.P_i[i], :] = 1
         self.S = S
         ispos = [self.varnames.tolist().index(i) for i in self.isvars]  # Position of IS vars
-        aspos = [self.varnames.tolist().index(i) for i in asvars]  # Position of AS vars
+        aspos = [self.varnames.tolist().index(i) for i in asvars_construct_matrix]  # Position of AS vars
         randpos = [self.varnames.tolist().index(i) for i in randvars]  # Position of AS vars
         randtranspos = [self.varnames.tolist().index(i) for i in randtransvars] # bc transformed variables with random coeffs
         fixedtranspos = [self.varnames.tolist().index(i) for i in fixedtransvars] # bc transformed variables with fixed coeffs
@@ -220,14 +229,14 @@ class ChoiceModel(ABC):
             Xis = np.array([])
         # For alternative specific variables
         Xas = None
-        if asvars:
+        if asvars_construct_matrix:
             Xas = X[:, aspos]
             Xas = Xas.reshape(N, J, -1)
 
         # Set design matrix based on existance of asvars and isvars
-        if len(self.asvars) and len(self.isvars):
+        if len(asvars_construct_matrix) and len(self.isvars):
             X = np.dstack((Xis, Xas))
-        elif len(self.asvars):
+        elif len(asvars_construct_matrix):
             X = Xas
         elif (len(self.isvars)):
             X = Xis

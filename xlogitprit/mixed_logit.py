@@ -165,6 +165,9 @@ class MixedLogit(ChoiceModel):
         self.rvidx, self.rvdist = [], []
         self.rvtransidx, self.rvtransdist = [], []
         for var in self.varnames:
+            if isvars is not None:
+                if var in isvars:
+                    continue
             if var in randvars.keys():
                 self.fxidx.append(False)
                 self.fxtransidx.append(False)
@@ -377,7 +380,11 @@ class MixedLogit(ChoiceModel):
             Brtrans = self._apply_distribution(Brtrans, self.rvtransdist)
             # applying transformation 
             Xrtrans_lmda = self.transFunc(Xrtrans, rlmda)
+            Xrtrans_lmda[np.isposinf(Xrtrans_lmda)] = 1e+30
+            Xrtrans_lmda[np.isneginf(Xrtrans_lmda)] = -1e+30
+
             Xbr_trans = np.einsum('npjk, nkr -> npjr', Xrtrans_lmda, Brtrans) # (N, P, J, R)
+            Xbr_trans[np.isnan(Xbr_trans)] = 1e-30 # TODO 
             # combining utilities
             V += Xbr_trans # (N, P, J, R)
 
@@ -405,7 +412,6 @@ class MixedLogit(ChoiceModel):
         if weights is not None:
             loglik = loglik*weights
         loglik = loglik.sum()
-
         # Gradient estimation
         # Observed probability minus predicted probability
         ymp = y - p # (N, P, J, R)
@@ -464,10 +470,8 @@ class MixedLogit(ChoiceModel):
                 # gr_b = (obs prob minus pred. prob) * obs. var * rand draw * der(RV)
                 dertrans = self._compute_derivatives(Brtrans, drawstrans, dist=self.rvtransdist, K=self.Krtrans)
                 grtrans_b = np.einsum('npjr, npjk -> nkr', ymp, Xrtrans_lmda)*dertrans
-
                 # for s.d. (obs - pred) * obs var * der rand coef * rand draw
                 grtrans_w = np.einsum('npjr, npjk -> nkr', ymp, Xrtrans_lmda)*dertrans*drawstrans
-
                 # for the lambda param
                 # gradient = (obs - pred) * deriv x_lambda * beta
                 der_Xrtrans_lmda = self.transform_deriv(Xrtrans, rlmda)
@@ -475,7 +479,6 @@ class MixedLogit(ChoiceModel):
                 der_Xrtrans_lmda[np.isnan(der_Xrtrans_lmda)] = 1e-30 # TODO 
                 der_Xbrtrans = np.einsum('npjk, nkr -> npjkr', der_Xrtrans_lmda, Brtrans) # (N, P, J, K, R)
                 grtrans_lmda = np.einsum('npjr, npjkr -> nkr', ymp, der_Xbrtrans) # (N, Krtrans, R)
-                
                 grtrans_b = (grtrans_b*pch[:, None, :]).mean(axis=2)/lik[:, None]  # (N,Kr)
                 grtrans_w = (grtrans_w*pch[:, None, :]).mean(axis=2)/lik[:, None]  # (N,Kr)
                 grtrans_lmda = (grtrans_lmda*pch[:, None, :]).mean(axis=2)/lik[:, None]  # (N,Kr)

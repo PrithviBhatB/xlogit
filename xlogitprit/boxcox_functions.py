@@ -8,9 +8,6 @@ def boxcox_transformation(X_matrix, lmdas):
 
     returns:
     """
-    #TODO: CHECK
-    print('runningboxcox')
-    print('lmdas', lmdas)
     bxcx_X = np.zeros_like(X_matrix)
     for i in range(len(lmdas)):
         # i -= 1

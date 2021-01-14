@@ -77,6 +77,9 @@ class MultinomialLogit(ChoiceModel):
         self._pre_fit(alts, varnames, isvars, transvars, base_alt, fit_intercept, transformation, maxiter, panels)
         self.fxidx, self.fxtransidx = [], []
         for var in self.varnames:
+            if isvars is not None:
+                if var in isvars:
+                    continue
             if var in transvars:
                 self.fxidx.append(False)
                 self.fxtransidx.append(True)
@@ -89,6 +92,12 @@ class MultinomialLogit(ChoiceModel):
         self.initialData = initialData
         if random_state is not None:
             np.random.seed(random_state)
+
+        if self.transvars is not None and self.transformation is None:
+            # if transvars provided and no specified transformation function
+            # give default to boxcox
+            self.transformation = "boxcox"
+
         if transformation == "boxcox":
             self.transFunc = boxcox_transformation
             self.transform_deriv = boxcox_param_deriv
@@ -105,6 +114,7 @@ class MultinomialLogit(ChoiceModel):
                                  + int(X.shape[1]))
 
         X, Xnames = self._setup_design_matrix(X)
+
         # add transformation vars and corresponding lambdas
         lambda_names = ["lambda.{}".format(transvar) for transvar in transvars]
         transnames = np.concatenate((transvars, lambda_names))
@@ -116,16 +126,18 @@ class MultinomialLogit(ChoiceModel):
         self._post_fit(optimizat_res, Xnames, int(1182/4), verbose)
 
     def _compute_probabilities(self, betas, X, avail):
-        transpos = [self.varnames.tolist().index(i) for i in self.transvars]  #  Position of trans vars
-        if sum(transpos):
-            X_trans =  self.initialData[:, transpos]
-            X_trans = X_trans.reshape(self.N, self.J, len(transpos))
+        # transpos = [self.varnames.tolist().index(i) for i in self.transvars]  #  Position of trans vars
+        Xf = X[:, :, self.fxidx]
+        X_trans = X[:, :, self.fxtransidx]
+        # if sum(self.fxtransidx):
+            # X_trans =  self.initialData[:, self.fxtransidx]
+            # X_trans = X_trans.reshape(self.N, self.J, len(self.fxtransidx))
         XB = 0
         if self.numFixedCoeffs > 0:
-            B = betas[0:self.numFixedCoeffs]
-            XB = X.dot(B)
+            B = betas[0:self.Kf]
+            XB = Xf.dot(B)
         Xtrans_lambda = None
-        if self.numTransformedCoeffs > 0:
+        if sum(self.fxtransidx):
             B_transvars = betas[self.numFixedCoeffs:int(self.numFixedCoeffs+(self.numTransformedCoeffs/2))]
             lambdas = betas[int(self.numFixedCoeffs+(self.numTransformedCoeffs/2)):]
             # applying transformations
@@ -158,8 +170,9 @@ class MultinomialLogit(ChoiceModel):
         X_trans = self.initialData[:, transpos]
         X_trans = X_trans.reshape(self.N, len(self.alternatives), len(transpos))
         ymp = y - p
-        if self.numFixedCoeffs > 0:
-            grad = np.einsum('nj,njk -> nk', ymp, X)
+        if self.Kf > 0:
+            Xf = X[:, :, self.fxidx]
+            grad = np.einsum('nj,njk -> nk', ymp, Xf)
         else:
             grad = np.array([])
         if self.numTransformedCoeffs > 0:
@@ -179,7 +192,6 @@ class MultinomialLogit(ChoiceModel):
 
         Hinv = np.linalg.pinv(H)
         grad = np.sum(grad, axis=0)
-
         return (-loglik, -grad, Hinv)
 
     def _scipy_bfgs_optimization(self, betas, X, y, weights, avail, maxiter):
