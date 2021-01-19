@@ -239,7 +239,7 @@ class MixedLogit(ChoiceModel):
         draws, drawstrans = self._generate_draws(self.N, R, halton)  # (N,Kr,R)
         n_coeff = self.Kf + self.Kr + self.Kchol + self.Kbw + 2*self.Kftrans + 3*self.Krtrans
         if init_coeff is None:
-            betas = np.repeat(.0, n_coeff)
+            betas = np.repeat(.1, n_coeff)
         else:
             betas = init_coeff
             if len(init_coeff) != n_coeff:
@@ -276,13 +276,22 @@ class MixedLogit(ChoiceModel):
         bnds = [ (bound[1][0],) * int(bound[1][1]) for bound in bound_dict.items() if bound[1][1] > 0 ]
         bnds = [tuple(itertools.chain.from_iterable(bnds))][0]
 
-        optimizat_res = \
-            minimize(self._loglik_gradient, betas, jac=True, method=method,
+        if method == 'L-BFGS-B':
+            optimizat_res = \
+                minimize(self._loglik_gradient, betas, jac=True, method=method,
                      args=(X, y, panel_info, draws, drawstrans, weights, avail), tol=1e-5,
                      bounds=bnds,
                      options={'gtol': 1e-4, 'maxiter': maxiter,
                               'disp': verbose > 0}
-                              )
+                              )    
+        else:
+            optimizat_res = \
+                minimize(self._loglik_gradient, betas, jac=True, method=method,
+                        args=(X, y, panel_info, draws, drawstrans, weights, avail), tol=1e-5,
+
+                        options={'gtol': 1e-4, 'maxiter': maxiter,
+                                'disp': verbose > 0}
+                                )
         self._post_fit(optimizat_res, Xnames, N, verbose)
 
     def _compute_probabilities(self, betas, X, panel_info, draws, drawstrans, avail):
@@ -322,7 +331,7 @@ class MixedLogit(ChoiceModel):
         # and random beta cholesky factors (chol)
         if dev.using_gpu:
             betas = dev.to_gpu(betas)
-
+        
         beta_segment_names = ["Bf", "Br_b", "chol", "Br_w", "Bftrans", "flmbda",
                               "Brtrans_b", "Brtrans_w", "rlmda"]
         var_list = dict()
@@ -335,6 +344,11 @@ class MixedLogit(ChoiceModel):
             var_list[beta_segment_names[count]] = betas[prev_index:i]
         
         Bf, Br_b, chol, Br_w, Bftrans, flmbda, Brtrans_b, Brtrans_w, rlmda  = var_list.values()
+        if dev.using_gpu:
+            Bf, Br_b, chol, Br_w, Bftrans, flmbda, Brtrans_b, Brtrans_w, rlmda = \
+            dev.to_gpu(Bf), dev.to_gpu(Br_b), dev.to_gpu(chol), dev.to_gpu(Br_w),
+            dev.to_gpu(Bftrans), dev.to_gpu(flmbda), dev.to_gpu(Brtrans_b), 
+            dev.to_gpu(Brtrans_w), dev.to_gpu(rlmda)
         chol_mat = np.zeros((self.correlationLength, self.correlationLength))
         indices = np.tril_indices(self.correlationLength)
         chol_mat[indices] = chol
@@ -345,7 +359,6 @@ class MixedLogit(ChoiceModel):
             chol_mat_temp[i+self.correlationLength, i+self.correlationLength] = \
                 Br_w[i]
         chol_mat = chol_mat_temp
-
         # Creating random coeffs using Br_b, cholesky matrix and random draws
         # Estimating the linear utility specification (U = sum of Xb)
         V = np.zeros((self.N, self.P, self.J, self.n_draws))
@@ -361,17 +374,17 @@ class MixedLogit(ChoiceModel):
             Br = Br_b[None, :, None]  + np.matmul(chol_mat, draws)
             Br = self._apply_distribution(Br, self.rvdist)
             XBr = np.einsum('npjk, nkr -> npjr', Xr, Br) # (N, P, J, R)
-            V += XBr#*self.S[:, :, :, None]
+            V += XBr  #*self.S[:, :, :, None]
         #  transformation
-        if (len(self.transvars) > 0):
-            #  transformations for variables with fixed coeffs
-            if self.Kftrans != 0:
-                Xftrans_lmda = self.transFunc(Xftrans, flmbda)
-                Xftrans_lmda[np.isneginf(Xftrans_lmda)] = 1e-5
-                # Estimating the linear utility specificiation (U = sum XB)
-                Xbf_trans = np.einsum('npjk,k -> npj', Xftrans_lmda, Bftrans)
-                # combining utilities
-                V += Xbf_trans[:, :, :, None]
+        #  transformations for variables with fixed coeffs
+        if self.Kftrans != 0:
+            Xftrans_lmda = self.transFunc(Xftrans, flmbda)
+            Xftrans_lmda[np.isneginf(Xftrans_lmda)] = -1e+30
+            Xftrans_lmda[np.isposinf(Xftrans_lmda)] = 1e+10
+            # Estimating the linear utility specificiation (U = sum XB)
+            Xbf_trans = np.einsum('npjk,k -> npj', Xftrans_lmda, Bftrans)
+            # combining utilities
+            V += Xbf_trans[:, :, :, None]
 
         # transformations for variables with random coeffs
         if self.Krtrans != 0:
@@ -380,13 +393,13 @@ class MixedLogit(ChoiceModel):
             Brtrans = self._apply_distribution(Brtrans, self.rvtransdist)
             # applying transformation 
             Xrtrans_lmda = self.transFunc(Xrtrans, rlmda)
-            Xrtrans_lmda[np.isposinf(Xrtrans_lmda)] = 1e+30
-            Xrtrans_lmda[np.isneginf(Xrtrans_lmda)] = -1e+30
+            Xrtrans_lmda[np.isposinf(Xrtrans_lmda)] = 1e+10
+            Xrtrans_lmda[np.isneginf(Xrtrans_lmda)] = -1e+10
 
             Xbr_trans = np.einsum('npjk, nkr -> npjr', Xrtrans_lmda, Brtrans) # (N, P, J, R)
-            Xbr_trans[np.isnan(Xbr_trans)] = 1e-30 # TODO 
+            # Xbr_trans[np.isnan(Xbr_trans)] = 1e-30 # TODO 
             # combining utilities
-            V += Xbr_trans # (N, P, J, R)
+            V += Xbr_trans  # (N, P, J, R)
 
         #  Combine utilities of fixed and random variables
         V[V > 700] = 700
@@ -397,7 +410,7 @@ class MixedLogit(ChoiceModel):
 
         # Thresholds to avoid overflow warnings
         eV[np.isposinf(eV)] = 1e+30
-        eV[np.isneginf(eV)] = 1e-30
+        eV[np.isneginf(eV)] = -1e+30
         sum_eV = np.sum(eV, axis=2, keepdims=True)
         p = np.divide(eV, sum_eV, out=np.zeros_like(eV), where=(sum_eV != 0))
         p = p*panel_info[:, :, None, None]
@@ -454,13 +467,13 @@ class MixedLogit(ChoiceModel):
                 # for the lambda param
                 der_Xftrans_lmda = self.transform_deriv(Xftrans, flmbda)
                 der_Xftrans_lmda[np.isposinf(der_Xftrans_lmda)] = 1e+30
-                der_Xftrans_lmda[np.isneginf(der_Xftrans_lmda)] = 1e-30
+                # der_Xftrans_lmda[np.isneginf(der_Xftrans_lmda)] = -1e+30
                 der_Xftrans_lmda[np.isnan(der_Xftrans_lmda)] = 1e-30 # TODO 
                 der_Xbftrans = np.einsum('npjk,k -> npk', der_Xftrans_lmda, Bftrans)
                 gftrans_lmda = np.einsum('npjr,npk -> nkr', ymp, der_Xbftrans) # (N, Kfbc, R)
                 gftrans = (gftrans*pch[:, None, :]).mean(axis=2)/lik[:, None]
-
                 gftrans_lmda = (gftrans_lmda*pch[:, None, :]).mean(axis=2)/lik[:, None]
+                
                 g = np.concatenate((g, gftrans, gftrans_lmda), axis = 1) if g.size \
                     else np.concatenate((gftrans, gftrans_lmda), axis=1)
             if self.Krtrans:
@@ -468,7 +481,9 @@ class MixedLogit(ChoiceModel):
                 # for mean: (obs prob. min pred. prob)*obs var * deriv rand coef
                 # if rand coef is lognormally distributed:
                 # gr_b = (obs prob minus pred. prob) * obs. var * rand draw * der(RV)
-                dertrans = self._compute_derivatives(Brtrans, drawstrans, dist=self.rvtransdist, K=self.Krtrans)
+                #  TODO: CHANGE!!!
+                temp_chol = chol_mat if chol_mat.size != 0 else np.diag(Brtrans_w)
+                dertrans = self._compute_derivatives(Brtrans, draws=drawstrans, dist=self.rvtransdist, chol_mat=temp_chol, K=self.Krtrans)
                 grtrans_b = np.einsum('npjr, npjk -> nkr', ymp, Xrtrans_lmda)*dertrans
                 # for s.d. (obs - pred) * obs var * der rand coef * rand draw
                 grtrans_w = np.einsum('npjr, npjk -> nkr', ymp, Xrtrans_lmda)*dertrans*drawstrans
@@ -490,10 +505,10 @@ class MixedLogit(ChoiceModel):
         # Hessian estimation
         H = g.T.dot(g)
         H[np.isnan(H)] = 1e-10 #TODO: why nan!!
-        H[np.isposinf(H)] = 1e+10
-        H[np.isneginf(H)] = -1e+10
-        H[H > 1e+10] = 1e+10
-        H[H < -1e+10] = -1e+10
+        H[np.isposinf(H)] = 1e+30
+        H[np.isneginf(H)] = -1e+30
+        # H[H > 1e+10] = 1e+10
+        # H[H < -1e+10] = -1e+10
         Hinv = np.linalg.pinv(H)
         self.total_fun_eval += 1
 
@@ -501,6 +516,8 @@ class MixedLogit(ChoiceModel):
         if weights is not None:
             g = g*weights[:, None]
         g = np.sum(g, axis=0)  # (K, )
+        if dev.using_gpu:
+            g, loglik = dev.to_cpu(g), dev.to_cpu(loglik)
         # log-lik
         return -loglik, -g, Hinv
 
@@ -561,8 +578,9 @@ class MixedLogit(ChoiceModel):
         pch[pch == 0] = 1e-30
         return pch  # (N,R)
 
-    def _apply_distribution(self, betas_random, draws):
-        for k, dist in enumerate(self.rvdist):
+    def _apply_distribution(self, betas_random, index=None, draws=None):
+        index = index if (index is not None) else self.rvdist
+        for k, dist in enumerate(index):
             if dist == 'ln':
                 betas_random[:, k, :] = dev.np.exp(betas_random[:, k, :])
             elif dist == 'tn':
@@ -601,6 +619,7 @@ class MixedLogit(ChoiceModel):
     def _compute_derivatives(self, betas, draws, dist=None, K=None, chol_mat=None):
         N, R = draws.shape[0], draws.shape[2]
         Kr = K if K else self.Kr
+
         der = dev.np.ones((N, Kr, R))
         dist = dist if dist else self.rvdist
         if any(set(dist).intersection(['ln', 'tn'])):  # If any ln or tn
@@ -624,7 +643,7 @@ class MixedLogit(ChoiceModel):
         # Compute: betas = mean + sd*draws
         #TODO: Consider randtrans?
         betas_random = br_mean[None, :, None] + np.matmul(chol_mat, draws)
-        betas_random = self._apply_distribution(betas_random, draws)
+        betas_random = self._apply_distribution(betas_random, self.rvdist, draws=draws)
         return betas_fixed, betas_random
 
     def _generate_draws(self, sample_size, n_draws, halton=True):
@@ -692,10 +711,44 @@ class MixedLogit(ChoiceModel):
         draws = np.stack(draws, axis=1)
         return draws
 
+    def _model_specific_validations(self, randvars, Xnames):
+        """Conduct validations specific for mixed logit models."""
+        if randvars is None:
+            raise ValueError("The randvars parameter is required for Mixed "
+                             "Logit estimation")
+        if not set(randvars.keys()).issubset(Xnames):
+            raise ValueError("Some variable names in randvars were not found "
+                             "in the list of variable names")
+        if not set(randvars.values()).issubset(["n", "ln", "t", "tn", "u"]):
+            raise ValueError("Wrong mixing distribution found in randvars. "
+                             "Accepted distrubtions are n, ln, t, u, tn")
+
+    def summary(self):
+        """Show estimation results in console."""
+        super(MixedLogit, self).summary()
+
+
     @staticmethod
     def check_if_gpu_available():
-        X = np.array([[2, 1], [1, 3], [3, 1], [2, 4]])
-        y = np.array([0, 1, 0, 1])
-        model = MixedLogit()
-        model.fit(X, y, varnames=["a", "b"], alts=["1", "2"], n_draws=500,
-                  randvars={'a': 'n', 'b': 'n'}, maxiter=0, verbose=0)
+        """Check if GPU processing is available by running a quick estimation.
+
+        Returns
+        -------
+        bool
+            True if GPU processing is available, False otherwise.
+
+        """
+        n_gpus = dev.get_device_count()
+        if n_gpus > 0:
+            # Test a very simple example to see if CuPy is working
+            X = np.array([[2, 1], [1, 3], [3, 1], [2, 4]])
+            y = np.array([0, 1, 0, 1])
+            model = MixedLogit()
+            model.fit(X, y, varnames=["a", "b"], alts=["1", "2"], n_draws=500,
+                      randvars={'a': 'n', 'b': 'n'}, maxiter=0, verbose=0)
+            print("{} GPU device(s) available. xlogit will use "
+                  "GPU processing".format(n_gpus))
+            return True
+        else:
+            print("*** No GPU device found. Verify CuPy is properly installed")
+            return False

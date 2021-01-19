@@ -256,18 +256,22 @@ class ChoiceModel(ABC):
         chol =  ["chol." + self.randvars[self.correlationpos[i]] + "." + \
                  self.randvars[self.correlationpos[j]] for i \
                  in range(self.correlationLength) for j in range(i+1)]
-        br_w_names = ["sd." + x for x in self.randvars]
+        br_w_names = []
+        if ((self.correlation is not True) and (not isinstance(self.correlation, list))):
+            if(hasattr(self, "rvidx")): #avoid errors with multinomial logit
+                br_w_names = np.char.add("sd.", self.varnames[self.rvidx])
         if (isinstance(self.correlation, list)): # if not all r.v.s correlated
             sd_uncorrelated_pos = [self.varnames.tolist().index(x) for x in self.varnames
                         if x not in self.correlation and x in self.randvars]
-            br_w_names = np.char.add("sd.", self.varnames[sd_uncorrelated_pos])
+            br_w_names = br_w_names.append(np.char.add("sd.", self.varnames[sd_uncorrelated_pos]))
+
         sd_rand_trans = np.char.add("sd.", self.varnames[randtranspos])
         names = np.concatenate((intercept_names, names, asvars_names, randvars,
                                 chol, br_w_names, fixedtransvars,
                                 lambda_names_fixed, randtransvars, sd_rand_trans,
                                 lambda_names_rand))
+        print('br_w_names', br_w_names)
         names = np.array(names)
-
         return X, names
 
     def _check_long_format_consistency(self, ids, alts, sorted_idx):

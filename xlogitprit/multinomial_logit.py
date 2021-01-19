@@ -109,7 +109,7 @@ class MultinomialLogit(ChoiceModel):
             betas = np.repeat(.0, self.numFixedCoeffs + self.numTransformedCoeffs)
         else:
             betas = init_coeff
-            if len(init_coeff) != X.shape[1]:
+            if len(init_coeff) != (self.numFixedCoeffs + self.numTransformedCoeffs):
                 raise ValueError("The size of initial_coeff must be: "
                                  + int(X.shape[1]))
 
@@ -122,7 +122,7 @@ class MultinomialLogit(ChoiceModel):
         y = y.reshape(self.N, self.J)
 
         # Call optimization routine
-        optimizat_res = self._scipy_bfgs_optimization(betas, X, y, weights, avail, maxiter)
+        optimizat_res = self._bfgs_optimization(betas, X, y, weights, avail, maxiter)
         self._post_fit(optimizat_res, Xnames, int(1182/4), verbose)
 
     def _compute_probabilities(self, betas, X, avail):
@@ -186,16 +186,18 @@ class MultinomialLogit(ChoiceModel):
             grad = grad*weights[:, None]
 
         H = np.dot(grad.T, grad)
+        H[H == 0] = 1e-10
         H[np.isnan(H)] = 1e-10 #TODO: why nans!
         H[H > 1e+10] = 1e+10
         H[H < -1e+10] = -1e+10
-
         Hinv = np.linalg.pinv(H)
+
         grad = np.sum(grad, axis=0)
+
         return (-loglik, -grad, Hinv)
 
     def _scipy_bfgs_optimization(self, betas, X, y, weights, avail, maxiter):
-        res_init, g, Hinv = self._loglik_and_gradient(betas, X, y, weights, avail)
+        # res_init, g = self._loglik_and_gradient(betas, X, y, weights, avail)
         res = minimize(self._loglik_and_gradient, betas, args=(X, y, weights, avail), jac=True, method='BFGS', tol=1e-10, options={'gtol': 1e-10})
         return res
 

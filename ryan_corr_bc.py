@@ -15,16 +15,18 @@ y = df['choice'].values
 alt = [1, 2, 3, 4]
 np.random.seed(123)
 model = MixedLogit()
+# init_coeff = np.repeat(.1, 13)
 model.fit(X, y,
           varnames,
           alts=alt,
-          randvars={'cl': 'n', 'loc': 'n', 'wk': 'u', 'tod': 'ln','seas': 'ln'},
+          randvars={'cl': 'n', 'loc': 'n', 'wk': 'u', 'tod': 'ln', 'seas': 'ln'},
           # fit_intercept=True,
-          transformation="boxcox",
+          # transformation="boxcox",
           transvars=['cl', 'loc', 'wk'],
           correlation=True,
           panels=df.id.values,
           # halton=False,
           # method='L-BFGS-B',
+          # init_coeff=init_coeff,
           n_draws=600)
 model.summary()
