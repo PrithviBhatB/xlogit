@@ -12,9 +12,10 @@ from scipy.optimize import minimize
 class MultinomialLogit(ChoiceModel):
     """Class for estimation of Multinomial and Conditional Logit Models"""
 
-    def fit(self, X, y, varnames=None, alts=None, isvars=None, transvars=None, transformation=None,
-            ids=None, weights=None, avail=None, base_alt=None, fit_intercept=False,
-            init_coeff=None, maxiter=2000, random_state=None, verbose=1):
+    def fit(self, X, y, varnames=None, alts=None, isvars=None, transvars=None,
+            transformation=None, ids=None, weights=None, avail=None,
+            base_alt=None, fit_intercept=False, init_coeff=None, maxiter=2000,
+            random_state=None, verbose=1):
         """Fit multinomial and/or conditional logit models.
 
         Parameters
@@ -35,8 +36,14 @@ class MultinomialLogit(ChoiceModel):
         isvars : list
             Names of individual-specific variables in ``varnames``
 
+        transvars: list, default=None
+            Names of variables to apply transformation on
+
         ids : array-like, shape (n_samples,)
             Identifiers for choice situations in long format.
+
+        transformation: string, default=None
+            Name of transformation to apply on transvars
 
         weights : array-like, shape (n_variables,), default=None
             Weights for the choice situations in long format.
@@ -74,7 +81,8 @@ class MultinomialLogit(ChoiceModel):
         self._validate_inputs(X, y, alts, varnames, isvars, ids, weights, None,
                               base_alt, fit_intercept, maxiter)
 
-        self._pre_fit(alts, varnames, isvars, transvars, base_alt, fit_intercept, transformation, maxiter, panels)
+        self._pre_fit(alts, varnames, isvars, transvars, base_alt,
+                      fit_intercept, transformation, maxiter, panels)
         self.fxidx, self.fxtransidx = [], []
         for var in self.varnames:
             if isvars is not None:
@@ -122,16 +130,13 @@ class MultinomialLogit(ChoiceModel):
         y = y.reshape(self.N, self.J)
 
         # Call optimization routine
-        optimizat_res = self._bfgs_optimization(betas, X, y, weights, avail, maxiter)
+        optimizat_res = self._scipy_bfgs_optimization(betas, X, y, weights,
+                                                      avail, maxiter)
         self._post_fit(optimizat_res, Xnames, int(1182/4), verbose)
 
     def _compute_probabilities(self, betas, X, avail):
-        # transpos = [self.varnames.tolist().index(i) for i in self.transvars]  #  Position of trans vars
         Xf = X[:, :, self.fxidx]
         X_trans = X[:, :, self.fxtransidx]
-        # if sum(self.fxtransidx):
-            # X_trans =  self.initialData[:, self.fxtransidx]
-            # X_trans = X_trans.reshape(self.N, self.J, len(self.fxtransidx))
         XB = 0
         if self.numFixedCoeffs > 0:
             B = betas[0:self.Kf]
@@ -144,13 +149,16 @@ class MultinomialLogit(ChoiceModel):
             Xtrans_lambda = self.transFunc(X_trans, lambdas)
             XB_trans = Xtrans_lambda.dot(B_transvars)
             XB += XB_trans
+        # XB[np.isnan(XB)] = 1e-30
         XB[XB > 700] = 700  # avoiding infs
-        XB[np.isposinf(XB)] = 1e+30  # avoiding infs
-        XB[np.isneginf(XB)] = 1e-30  # avoiding infs
+        # XB[np.isposinf(XB)] = 1e+30  # avoiding infs
+        # XB[np.isneginf(XB)] = -1e+30  # avoiding infs
         XB = XB.reshape(self.N, self.J)
         eXB = np.exp(XB)
         if avail is not None:
             eXB = eXB*avail
+        eXB[np.isposinf(eXB)] = 1e+30
+        eXB[np.isneginf(eXB)] = 1e-30
         p = eXB/np.sum(eXB, axis=1, keepdims=True)  # (N,J)
         return p, Xtrans_lambda
 
@@ -165,7 +173,8 @@ class MultinomialLogit(ChoiceModel):
         # Individual contribution to the gradient
 
         transpos = [self.varnames.tolist().index(i) for i in self.transvars]  # Position of trans vars
-        B_trans = betas[self.numFixedCoeffs:int(self.numFixedCoeffs+(self.numTransformedCoeffs/2))]
+        B_trans = betas[self.numFixedCoeffs:
+                        int(self.numFixedCoeffs+(self.numTransformedCoeffs/2))]
         lambdas = betas[int(self.numFixedCoeffs+(self.numTransformedCoeffs/2)):]
         X_trans = self.initialData[:, transpos]
         X_trans = X_trans.reshape(self.N, len(self.alternatives), len(transpos))
@@ -177,28 +186,36 @@ class MultinomialLogit(ChoiceModel):
             grad = np.array([])
         if self.numTransformedCoeffs > 0:
             # Individual contribution of trans to the gradient
-            gtrans = np.einsum('nj,njk -> nk',ymp, Xtrans_lmda)
+            gtrans = np.einsum('nj,njk -> nk', ymp, Xtrans_lmda)
             der_Xtrans_lmda = self.transform_deriv(X_trans, lambdas)
             der_XBtrans = np.einsum('njk,k -> njk', der_Xtrans_lmda, B_trans)
             gtrans_lmda = np.einsum('nj,njk -> nk', ymp, der_XBtrans)
-            grad = np.concatenate((grad, gtrans, gtrans_lmda), axis=1) if grad.size else np.concatenate((gtrans, gtrans_lmda), axis=1) # (N, K)
+            grad = np.concatenate((grad, gtrans, gtrans_lmda), axis=1) \
+                if grad.size \
+                else np.concatenate((gtrans, gtrans_lmda), axis=1)  # (N, K)
         if weights is not None:
             grad = grad*weights[:, None]
 
         H = np.dot(grad.T, grad)
-        H[H == 0] = 1e-10
-        H[np.isnan(H)] = 1e-10 #TODO: why nans!
-        H[H > 1e+10] = 1e+10
-        H[H < -1e+10] = -1e+10
+        # H[H == 0] = 1e-10
+        # H[np.isnan(H)] = 1e-10  # TODO: why nans!
+        # H[H > 1e+10] = 1e+10
+        # H[H < -1e+10] = -1e+10
         Hinv = np.linalg.pinv(H)
 
         grad = np.sum(grad, axis=0)
-
         return (-loglik, -grad, Hinv)
 
     def _scipy_bfgs_optimization(self, betas, X, y, weights, avail, maxiter):
         # res_init, g = self._loglik_and_gradient(betas, X, y, weights, avail)
-        res = minimize(self._loglik_and_gradient, betas, args=(X, y, weights, avail), jac=True, method='BFGS', tol=1e-10, options={'gtol': 1e-10})
+        res = minimize(self._loglik_and_gradient,
+                       betas,
+                       args=(X, y, weights, avail),
+                       jac=True,
+                       method='BFGS',
+                       tol=1e-10,
+                       options={'gtol': 1e-10}
+                       )
         return res
 
     def _bfgs_optimization(self, betas, X, y, weights, avail, maxiter):

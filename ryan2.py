@@ -12,18 +12,21 @@ df['seas'] = -df['seas']
 
 X = df[varnames].values
 y = df['choice'].values
+choice_id = df['chid']
 alt = [1, 2, 3, 4]
 np.random.seed(123)
 model = MixedLogit()
 model.fit(X, y,
           varnames,
           alts=alt,
-          randvars={'cl': 'n', 'loc': 'n', 'wk': 'u', 'tod': 'ln','seas': 'ln'},
+          randvars={'cl': 'n', 'loc': 'n', 'wk': 'u', 'tod': 'ln', 'seas': 'ln'},
           # fit_intercept=True,
-          transformation="boxcox",
-          transvars=['cl', 'loc', 'wk'],
+          # transformation="boxcox",
+          # transvars=['cl', 'loc', 'wk'],
           correlation=True,
+          # ids=choice_id,
           panels=df.id.values,
+          isvars=[],
           # halton=False,
           # method='L-BFGS-B',
           n_draws=600)
