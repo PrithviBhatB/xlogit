@@ -9,15 +9,21 @@ X = df[varnames].values
 y = df['choice'].values
 
 model = MixedLogit()
-# initial_coeffs = [1, 2, 9, -0.25, 0.4, 0.1, 0.1, 0.5, 0.7]
+initial_coeffs = [0.5, 0.5, 0.5, -0.1, 0.5, 1, 1, 1]
 model.fit(X, y, varnames=varnames,
           # isvars=['income'],
           alts=['beach', 'boat', 'charter', 'pier'],
-          randvars={'catch': 'n'},
+          randvars={'price': 'n'},
           transvars=['price', 'catch'],
-          # init_coeff=initial_coeffs,
+          tol=1e-4,
+        #   verbose=0,
+          n_draws=600,
+          maxiter=2000,
+          grad=False,
+          hess=False,
+        #   init_coeff=initial_coeffs,
           # correlation=True,
-          # method="L-BFGS-B",
-          # fit_intercept=True
+        #   method="Nelder-Mead",
+        #   fit_intercept=True
           )
 model.summary()

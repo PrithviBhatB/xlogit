@@ -2,34 +2,44 @@ import pandas as pd
 import numpy as np
 
 from xlogitprit import MixedLogit
+from xlogitprit import MultinomialLogit
 df = pd.read_csv("https://raw.githubusercontent.com/arteagac/xlogit/master/examples/data/electricity_long.csv")
 
 varnames = ["pf", "cl", "loc", "wk", "tod", "seas"]
 
-df['tod'] = -df['tod']
-df['seas'] = -df['seas']
-
-
+# df['tod'] = -df['tod']
+# df['seas'] = -df['seas']
+# print('sum', sum(np.where(df)))
+# print("df['seas']", df['seas'])
+# print(1/0)
 X = df[varnames].values
 y = df['choice'].values
 choice_id = df['chid']
 alt = [1, 2, 3, 4]
 np.random.seed(123)
-model = MixedLogit()
+
+print('covariance', np.cov(np.transpose(X)))
+
+# print(1/0)
+
+model = MultinomialLogit()
 model.fit(X, y,
           varnames,
           alts=alt,
-          randvars={'cl': 'n', 'loc': 'n', 'wk': 'u', 'tod': 'ln', 'seas': 'ln'},
+        #   randvars={'seas': 'ln', 'wk': 'n', 'pf': 'n', 'loc': 'n'},
           fit_intercept=True,
-          # transformation="boxcox",
-          # transvars=['cl', 'loc', 'wk'],
+        #   transformation="boxcox",
+        #   transvars=['wk', 'seas'],
         #   correlation=True,
           # ids=choice_id,
-          panels=df.id.values,
+        #   panels=df.id.values,
+          tol=1e-4,
+          grad=False,
+          hess=False,
           isvars=[],
-        #   grad=False,
-        #   hess=False,
+        #   verbose=1,
           # halton=False,
         #   method='L-BFGS-B',
-          n_draws=400)
+        #   n_draws=600
+          )
 model.summary()

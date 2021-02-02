@@ -111,11 +111,14 @@ class ChoiceModel(ABC):
         self.convergence = optimization_res['success']
         self.coeff_ = optimization_res['x']
         # convert hess inverse for L-BFGS-B optimisation method
-        if (isinstance(optimization_res['hess_inv'], sc.optimize.lbfgsb.LbfgsInvHessProduct)):
-            hess = optimization_res['hess_inv'].todense()
+        if hasattr(optimization_res, 'hess_inv'):
+            if (isinstance(optimization_res['hess_inv'], sc.optimize.lbfgsb.LbfgsInvHessProduct)):
+                hess = optimization_res['hess_inv'].todense()
+            else:
+                hess = optimization_res['hess_inv']
+            self.stderr = np.sqrt(np.diag(np.array(hess)))
         else:
-            hess = optimization_res['hess_inv']
-        self.stderr = np.sqrt(np.diag(np.array(hess)))
+            self.stderr = np.zeros_like(self.coeff_)
         self.zvalues = np.nan_to_num(self.coeff_/self.stderr)
         self.pvalues = 2*t.pdf(-np.abs(self.zvalues), df=sample_size)
         self.loglikelihood = -optimization_res['fun']
@@ -173,9 +176,12 @@ class ChoiceModel(ABC):
                 self.rvtransidx = np.insert(np.array(self.rvtransidx, dtype="bool_"),
                                             0, np.repeat(False, (J - 1)))
         
+
         if self.fit_intercept:
             # adjust variables to allow intercept parameters
             self.isvars = np.insert(np.array(self.isvars, dtype="<U16"), 0, '_inter')
+            self.varnames_full = np.insert(np.array(self.varnames, dtype="<U16"), 0,
+                                 np.repeat('_inter', (J-1)))  # For easier varname logic for coeff names 
             self.varnames = np.insert(np.array(self.varnames, dtype="<U16"), 0, '_inter')
             self.initialData = np.hstack((np.ones(J*N)[:, None], self.initialData))
             X = np.hstack((np.ones(J*N)[:, None], X))
@@ -282,7 +288,10 @@ class ChoiceModel(ABC):
         br_w_names = []
         if (self.correlation is not True and not isinstance(self.correlation, list)):
             if(hasattr(self, "rvidx")):  # avoid errors with multinomial logit
-                br_w_names = np.char.add("sd.", self.varnames[self.rvidx])
+                if self.fit_intercept:
+                    br_w_names = np.char.add("sd.", self.varnames_full[self.rvidx])
+                else:
+                    br_w_names = np.char.add("sd.", self.varnames[self.rvidx])
         if (isinstance(self.correlation, list)):  # if not all r.v.s correlated
             sd_uncorrelated_pos = [self.varnames.tolist().index(x)
                                    for x in self.varnames

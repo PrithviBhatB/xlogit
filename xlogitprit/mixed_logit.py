@@ -6,6 +6,7 @@ from .boxcox_functions import boxcox_param_deriv_mixed, \
                               boxcox_transformation_mixed
 import scipy.stats
 from scipy.optimize import minimize
+# from scipy.optimize import basinhopping
 from ._choice_model import ChoiceModel
 from ._device import device as dev
 import numpy as np
@@ -75,7 +76,8 @@ class MixedLogit(ChoiceModel):
             ids=None, transformation=None, weights=None, avail=None,
             randvars=None, panels=None, base_alt=None, fit_intercept=False,
             init_coeff=None, maxiter=2000, random_state=None, correlation=None,
-            n_draws=200, halton=True, verbose=1, method="bfgs"):
+            n_draws=200, halton=True, verbose=1, tol=1e-5, hess=True,
+            grad=True, method="bfgs"):
         """Fit Mixed Logit models.
 
         Parameters
@@ -151,6 +153,12 @@ class MixedLogit(ChoiceModel):
         verbose : int, default=1
             Verbosity of messages to show during estimation. 0: No messages,
             1: Some messages, 2: All messages
+
+        tol : # TODO
+
+        hess :
+
+        grad : 
 
         method: string, default="bfgs"
             specify optimisation method
@@ -252,6 +260,12 @@ class MixedLogit(ChoiceModel):
         self.n_draws = n_draws
         self.n_draws = n_draws
         self.verbose = verbose
+
+        self.grad = grad
+        self.hess = hess
+
+        jac = True if self.grad else False
+
         self.total_fun_eval = 0
 
         if weights is not None:
@@ -268,7 +282,7 @@ class MixedLogit(ChoiceModel):
         n_coeff = self.Kf + self.Kr + self.Kchol + self.Kbw + 2*self.Kftrans +\
             3*self.Krtrans
         if init_coeff is None:
-            betas = np.repeat(.1, n_coeff)
+            betas = np.repeat(.0, n_coeff)
         else:
             betas = init_coeff
             if len(init_coeff) != n_coeff:
@@ -315,30 +329,32 @@ class MixedLogit(ChoiceModel):
                 minimize(
                     self._loglik_gradient,
                     betas,
-                    jac=True,
+                    jac=jac,
                     method=method,
                     args=(X, y, panel_info, draws, drawstrans, weights,
                           avail),
-                    tol=1e-5,
+                    tol=tol,
                     bounds=bnds,
                     options={
-                        'gtol': 1e-4,
+                        'ftol': tol,
                         'maxiter': maxiter,
                         'disp': verbose > 0
                     }
                 )
         else:
+            # minimizer_kwargs = {"method": "BFGS", "args": (X, y, panel_info, draws, drawstrans, weights, avail)}
+            # ret = basinhopping(self._loglik_gradient, betas, minimizer_kwargs=minimizer_kwargs, niter=200)
             optimizat_res = \
                 minimize(
                     self._loglik_gradient,
                     betas,
-                    jac=True,
+                    jac=jac,
                     method=method,
                     args=(X, y, panel_info, draws, drawstrans,
                           weights, avail),
-                    tol=1e-5,
+                    tol=tol,
                     options={
-                        'gtol': 1e-4,
+                        'gtol': tol,
                         'maxiter': maxiter,
                         'disp': verbose > 0
                     }
@@ -424,9 +440,13 @@ class MixedLogit(ChoiceModel):
         # Estimating the linear utility specification (U = sum of Xb)
         V = np.zeros((self.N, self.P, self.J, self.n_draws))
         Xf = X[:, :, :, self.fxidx]
+        Xf = Xf.astype('float')
         Xftrans = X[:, :, :, self.fxtransidx]
+        Xftrans = Xftrans.astype('float')
         Xr = X[:, :, :, self.rvidx]
+        Xr = Xr.astype('float')
         Xrtrans = X[:, :, :, self.rvtransidx]
+        Xrtrans = Xrtrans.astype('float')
 
         if self.Kf != 0:
             XBf = np.einsum('npjk,k -> npj', Xf, Bf)
@@ -441,7 +461,7 @@ class MixedLogit(ChoiceModel):
         if self.Kftrans != 0:
             Xftrans_lmda = self.transFunc(Xftrans, flmbda)
             Xftrans_lmda[np.isneginf(Xftrans_lmda)] = -1e+30
-            Xftrans_lmda[np.isposinf(Xftrans_lmda)] = 1e+10
+            Xftrans_lmda[np.isposinf(Xftrans_lmda)] = 1e+30
             # Estimating the linear utility specificiation (U = sum XB)
             Xbf_trans = np.einsum('npjk,k -> npj', Xftrans_lmda, Bftrans)
             # combining utilities
@@ -455,8 +475,8 @@ class MixedLogit(ChoiceModel):
             Brtrans = self._apply_distribution(Brtrans, self.rvtransdist)
             # applying transformation
             Xrtrans_lmda = self.transFunc(Xrtrans, rlmda)
-            Xrtrans_lmda[np.isposinf(Xrtrans_lmda)] = 1e+10
-            Xrtrans_lmda[np.isneginf(Xrtrans_lmda)] = -1e+10
+            Xrtrans_lmda[np.isposinf(Xrtrans_lmda)] = 1e+30
+            Xrtrans_lmda[np.isneginf(Xrtrans_lmda)] = -1e+30
 
             Xbr_trans = np.einsum('npjk, nkr -> npjr', Xrtrans_lmda, Brtrans)  # (N, P, J, R)
             # Xbr_trans[np.isnan(Xbr_trans)] = 1e-30 # TODO
@@ -535,13 +555,13 @@ class MixedLogit(ChoiceModel):
                 # for the lambda param
                 der_Xftrans_lmda = self.transform_deriv(Xftrans, flmbda)
                 der_Xftrans_lmda[np.isposinf(der_Xftrans_lmda)] = 1e+30
-                # der_Xftrans_lmda[np.isneginf(der_Xftrans_lmda)] = -1e+30
+                der_Xftrans_lmda[np.isneginf(der_Xftrans_lmda)] = -1e+30
                 der_Xftrans_lmda[np.isnan(der_Xftrans_lmda)] = 1e-30 # TODO 
                 der_Xbftrans = np.einsum('npjk,k -> npk', der_Xftrans_lmda, Bftrans)
                 gftrans_lmda = np.einsum('npjr,npk -> nkr', ymp, der_Xbftrans) # (N, Kfbc, R)
                 gftrans = (gftrans*pch[:, None, :]).mean(axis=2)/lik[:, None]
                 gftrans_lmda = (gftrans_lmda*pch[:, None, :]).mean(axis=2)/lik[:, None]
-                
+                gftrans_lmda = gftrans_lmda * 1e+15
                 g = np.concatenate((g, gftrans, gftrans_lmda), axis = 1) if g.size \
                     else np.concatenate((gftrans, gftrans_lmda), axis=1)
             if self.Krtrans:
@@ -551,7 +571,7 @@ class MixedLogit(ChoiceModel):
                 # gr_b = (obs prob minus pred. prob) * obs. var * rand draw * der(RV)
                 #  TODO: Check
                 temp_chol = chol_mat if chol_mat.size != 0 else np.diag(Brtrans_w)
-                dertrans = self._compute_derivatives(Brtrans, draws=drawstrans, dist=self.rvtransdist, chol_mat=temp_chol, K=self.Krtrans)
+                dertrans = self._compute_derivatives(betas, draws=drawstrans, dist=self.rvtransdist, chol_mat=temp_chol, K=self.Krtrans)
                 grtrans_b = np.einsum('npjr, npjk -> nkr', ymp, Xrtrans_lmda)*dertrans
                 # for s.d. (obs - pred) * obs var * der rand coef * rand draw
                 grtrans_w = np.einsum('npjr, npjk -> nkr', ymp, Xrtrans_lmda)*dertrans*drawstrans
@@ -571,13 +591,16 @@ class MixedLogit(ChoiceModel):
         # weighted average of the gradient when panels data is used
        
         # Hessian estimation
-        H = g.T.dot(g)
-        H[np.isnan(H)] = 1e-10 #TODO: why nan!!
-        H[np.isposinf(H)] = 1e+30
-        H[np.isneginf(H)] = -1e+30
-        # H[H > 1e+10] = 1e+10
-        # H[H < -1e+10] = -1e+10
-        Hinv = np.linalg.pinv(H)
+        if self.hess:
+            H = g.T.dot(g)
+            H[np.isnan(H)] = 1e-30  # TODO: why nan!!
+            H[np.isposinf(H)] = 1e+30
+            H[np.isneginf(H)] = -1e+30
+
+            # H[H > 1e+30] = 1e+30
+            # H[H < -1e+30] = -1e+30
+            Hinv = np.linalg.pinv(H)
+
         self.total_fun_eval += 1
 
         # updated gradient
@@ -586,51 +609,18 @@ class MixedLogit(ChoiceModel):
         g = np.sum(g, axis=0)  # (K, )
         if dev.using_gpu:
             g, loglik = dev.to_cpu(g), dev.to_cpu(loglik)
+
         # log-lik
-        return -loglik, -g, Hinv
 
-    # def _loglik_gradient(self, betas, X, y, panel_info, draws, drawstrans, weights):
+        result = (-loglik)
 
-    #     if dev.using_gpu:
-    #         betas = dev.to_gpu(betas)
-    #     p = self._compute_probabilities(betas, X, panel_info, draws, drawstrans, avail)
-    #     # Probability of chosen alts
-    #     pch = (y*p).sum(axis=2)  # (N,P,R)
-    #     pch = self._prob_product_across_panels(pch, panel_info)  # (N,R)
-    #     # Log-likelihood
-    #     lik = pch.mean(axis=1)  # (N,)
-    #     loglik = dev.np.log(lik)
-    #     if weights is not None:
-    #         loglik = loglik*weights
-    #     loglik = loglik.sum()
+        if self.grad:
+            if self.hess:
+                result = (-loglik, -g, -Hinv)
+            else:
+                result = (-loglik, -g)
 
-    #     # Gradient
-    #     Xf = X[:, :, :, ~self.rvidx]
-    #     Xr = X[:, :, :, self.rvidx]
-
-    #     ymp = y - p  # (N,P,J,R)
-    #     # Gradient for fixed and random params
-    #     gr_f = dev.np.einsum('npjr,npjk -> nkr', ymp, Xf)
-    #     der = self._compute_derivatives(betas, draws)
-    #     gr_b = dev.np.einsum('npjr,npjk -> nkr', ymp, Xr)*der
-    #     gr_w = dev.np.einsum('npjr,npjk -> nkr', ymp, Xr)*der*draws
-    #     # Multiply gradient by the chose prob. and dived by mean chose prob.
-    #     gr_f = (gr_f*pch[:, None, :]).mean(axis=2)/lik[:, None]  # (N,Kf)
-    #     gr_b = (gr_b*pch[:, None, :]).mean(axis=2)/lik[:, None]  # (N,Kr)
-    #     gr_w = (gr_w*pch[:, None, :]).mean(axis=2)/lik[:, None]  # (N,Kr)
-    #     # Put all gradients in a single array and aggregate them
-    #     grad = self._concat_gradients(gr_f, gr_b, gr_w)  # (N,K)
-    #     if weights is not None:
-    #         grad = grad*weights[:, None]
-    #     grad = grad.sum(axis=0)  # (K,)
-
-    #     if dev.using_gpu:
-    #         grad, loglik = dev.to_cpu(grad), dev.to_cpu(loglik)
-    #     self.total_fun_eval += 1
-    #     if self.verbose > 1:
-    #         print("Evaluation {}  Log-Lik.={:.2f}".format(self.total_fun_eval,
-    #                                                       -loglik))
-    #     return -loglik, -grad
+        return result
 
     def _concat_gradients(self, gr_f, gr_b, gr_w):
         idx = np.append(np.where(~self.rvidx)[0], np.where(self.rvidx)[0])
@@ -711,7 +701,8 @@ class MixedLogit(ChoiceModel):
         # Compute: betas = mean + sd*draws
         # TODO: Consider randtrans?
         betas_random = br_mean[None, :, None] + np.matmul(chol_mat, draws)
-        betas_random = self._apply_distribution(betas_random, self.rvdist, 
+
+        betas_random = self._apply_distribution(betas_random, self.rvdist,
                                                 draws=draws)
         return betas_fixed, betas_random
 

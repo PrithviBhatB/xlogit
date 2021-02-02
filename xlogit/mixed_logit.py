@@ -230,10 +230,15 @@ class MixedLogit(ChoiceModel):
         Xf = X[:, :, :, ~self._rvidx]  # Data for fixed coefficients
         Xr = X[:, :, :, self._rvidx]   # Data for random coefficients
 
+        # Estimating the linear utility specification (U = sum of XB)
         XBf = dev.np.einsum('npjk,k -> npj', Xf, Bf)  # (N,P,J)
         XBr = dev.np.einsum('npjk,nkr -> npjr', Xr, Br)  # (N,P,J,R)
+
+        # Combining utilities of fixed and random variables
         V = XBf[:, :, :, None] + XBr  # (N,P,J,R)
         V[V > 700] = 700
+
+        # Exponent of the utility function for the logit formula
         eV = dev.np.exp(V)
 
         if avail is not None:
@@ -241,6 +246,7 @@ class MixedLogit(ChoiceModel):
 
         sumeV = dev.np.sum(eV, axis=2, keepdims=True)
         sumeV[sumeV == 0] = 1e-30
+        # Estimation of logit probabilities
         p = eV/sumeV  # (N,P,J,R)
         p = p*panel_info[:, :, None, None]  # Zero for unbalanced panels
         return p

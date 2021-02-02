@@ -7,7 +7,7 @@ import numpy as np
 from ._choice_model import ChoiceModel
 from .boxcox_functions import boxcox_transformation, boxcox_param_deriv
 from scipy.optimize import minimize
-
+import warnings
 
 class MultinomialLogit(ChoiceModel):
     """Class for estimation of Multinomial and Conditional Logit Models"""
@@ -15,7 +15,8 @@ class MultinomialLogit(ChoiceModel):
     def fit(self, X, y, varnames=None, alts=None, isvars=None, transvars=None,
             transformation=None, ids=None, weights=None, avail=None,
             base_alt=None, fit_intercept=False, init_coeff=None, maxiter=2000,
-            random_state=None, verbose=1):
+            random_state=None, tol=1e-5, grad=None, hess=None, verbose=1,
+            method="BFGS"):
         """Fit multinomial and/or conditional logit models.
 
         Parameters
@@ -71,6 +72,11 @@ class MultinomialLogit(ChoiceModel):
             Verbosity of messages to show during estimation. 0: No messages,
             1: Some messages, 2: All messages
 
+        tol : # TODO
+
+        grad : 
+
+        hess :
 
         Returns
         -------
@@ -85,9 +91,13 @@ class MultinomialLogit(ChoiceModel):
                       fit_intercept, transformation, maxiter, panels)
         self.fxidx, self.fxtransidx = [], []
         for var in self.varnames:
-            if isvars is not None:
-                if var in isvars:
-                    continue
+            with warnings.catch_warnings():
+                # CURRENTLY IGNORING FUTURE WARNING
+                # CURRENT PY: 3.8.3, numpy: 1.18.5
+                warnings.simplefilter(action='ignore', category=FutureWarning)
+                if isvars is not None:
+                    if var in isvars:
+                        continue
             if var in transvars:
                 self.fxidx.append(False)
                 self.fxtransidx.append(True)
@@ -98,6 +108,13 @@ class MultinomialLogit(ChoiceModel):
         X, y, panels = self._arrange_long_format(X, y, ids, alts)
         self.y = y
         self.initialData = initialData
+        self.grad = grad
+        self.hess = hess
+
+        self.method = method
+
+        jac = True if self.grad else False
+
         if random_state is not None:
             np.random.seed(random_state)
 
@@ -131,12 +148,14 @@ class MultinomialLogit(ChoiceModel):
 
         # Call optimization routine
         optimizat_res = self._scipy_bfgs_optimization(betas, X, y, weights,
-                                                      avail, maxiter)
+                                                      avail, maxiter, tol, jac)
         self._post_fit(optimizat_res, Xnames, int(1182/4), verbose)
 
     def _compute_probabilities(self, betas, X, avail):
         Xf = X[:, :, self.fxidx]
+        Xf = Xf.astype('float')
         X_trans = X[:, :, self.fxtransidx]
+        X_trans = X_trans.astype('float')
         XB = 0
         if self.numFixedCoeffs > 0:
             B = betas[0:self.Kf]
@@ -166,6 +185,7 @@ class MultinomialLogit(ChoiceModel):
         p, Xtrans_lmda = self._compute_probabilities(betas, X, avail)
         # Log likelihood
         lik = np.sum(y*p, axis=1)
+        lik[lik == 0] = 1e-30
         loglik = np.log(lik)
         if weights is not None:
             loglik = loglik*weights
@@ -178,6 +198,7 @@ class MultinomialLogit(ChoiceModel):
         lambdas = betas[int(self.numFixedCoeffs+(self.numTransformedCoeffs/2)):]
         X_trans = self.initialData[:, transpos]
         X_trans = X_trans.reshape(self.N, len(self.alternatives), len(transpos))
+        X_trans = X_trans.astype('float')
         ymp = y - p
         if self.Kf > 0:
             Xf = X[:, :, self.fxidx]
@@ -196,25 +217,39 @@ class MultinomialLogit(ChoiceModel):
         if weights is not None:
             grad = grad*weights[:, None]
 
-        H = np.dot(grad.T, grad)
-        # H[H == 0] = 1e-10
-        # H[np.isnan(H)] = 1e-10  # TODO: why nans!
-        # H[H > 1e+10] = 1e+10
-        # H[H < -1e+10] = -1e+10
-        Hinv = np.linalg.pinv(H)
+        if self.hess:
+            H = np.dot(grad.T, grad)
+            H[H == 0] = 1e-10
+            H[np.isnan(H)] = 1e-10  # TODO: why nans!
+            H[H > 1e+10] = 1e+10
+            H[H < -1e+10] = -1e+10
+            Hinv = np.linalg.pinv(H)
 
         grad = np.sum(grad, axis=0)
-        return (-loglik, -grad, Hinv)
 
-    def _scipy_bfgs_optimization(self, betas, X, y, weights, avail, maxiter):
-        # res_init, g = self._loglik_and_gradient(betas, X, y, weights, avail)
+        result = (-loglik)
+
+        if self.grad:
+            if self.hess:
+                result = (-loglik, -grad, -Hinv)
+            else:
+                result = (-loglik, -grad)
+
+        return result
+
+        return (-loglik, -grad)
+
+    def _scipy_bfgs_optimization(self, betas, X, y, weights, avail, maxiter, tol, jac):
         res = minimize(self._loglik_and_gradient,
                        betas,
                        args=(X, y, weights, avail),
-                       jac=True,
-                       method='BFGS',
-                       tol=1e-10,
-                       options={'gtol': 1e-10}
+                       jac=jac,
+                       method=self.method,
+                       tol=tol,
+                       options={
+                           'gtol': tol,
+                           'maxiter': maxiter
+                           }
                        )
         return res
 
