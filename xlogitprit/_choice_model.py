@@ -252,6 +252,24 @@ class ChoiceModel(ABC):
             # Multiply dummy representation by the individual specific data
             Xis = np.einsum('nj,nk->njk', Xis, dummy)
             Xis = Xis.reshape(P_N, self.J, (self.J-1)*len(ispos))
+            if hasattr(self, 'varnames_full'):
+                copy = self.isvars[np.where(self.isvars != '_inter')]
+                ispos = ispos[1:]  # ASSUMES INTERCEPT IS FIRST POSITION
+                # if self.fit_intercept:
+                #     del copy[np.where(copy == '_inter')]
+                # for count, var in enumerate(self.varnames_full):
+                #     if var in self.isvars:
+                #         del self.varnames_full[count]
+                for pos in ispos:
+                    self.varnames_full = np.insert(np.array(self.varnames_full, dtype="<U16"), pos + J - 2, # J - 2:  + (J - 1 for intercept) - 1 for existing isvar
+                        np.repeat(self.varnames[pos], (J - 2)))  # For easier varname logic for coeff names 
+            else:
+                for pos in ispos:
+                    print('self.varnames', self.varnames)
+                    self.varnames_full = np.insert(np.array(self.varnames, dtype="<U16"), pos,
+                        np.repeat(self.varnames[pos], (J - 2)))  # For easier varname logic for coeff names 
+                # self.varnames_full = np.insert(np.array(self.varnames, dtype="<U16"), ispos,
+                #     np.repeat('_inter', (J-1)))  # For easier varname logic for coeff names 
         else:
             Xis = np.array([])
         # For alternative specific variables
@@ -288,7 +306,9 @@ class ChoiceModel(ABC):
         br_w_names = []
         if (self.correlation is not True and not isinstance(self.correlation, list)):
             if(hasattr(self, "rvidx")):  # avoid errors with multinomial logit
-                if self.fit_intercept:
+                print('self.varnames_full', self.varnames_full)
+                print('self.rvidx', self.rvidx)
+                if self.fit_intercept or len(self.isvars):
                     br_w_names = np.char.add("sd.", self.varnames_full[self.rvidx])
                 else:
                     br_w_names = np.char.add("sd.", self.varnames[self.rvidx])

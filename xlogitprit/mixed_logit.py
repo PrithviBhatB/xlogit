@@ -734,14 +734,14 @@ class MixedLogit(ChoiceModel):
             elif dist == 'u':  # Uniform
                 draws[:, k, :] = 2*draws[:, k, :] - 1
 
-        self.rvtransdist = [x for x in self.rvtransdist if x is not False] #remove False to allow better enumeration
+        self.rvtransdist = [x for x in self.rvtransdist if x is not False]  # remove False to allow better enumeration
         for k, dist in enumerate(self.rvtransdist):
             if dist in ['n', 'ln', 'tn']:  # Normal based
                 drawstrans[:, k, :] = scipy.stats.norm.ppf(drawstrans[:, k, :])
             elif dist == 't':  # Triangular
                 draws_k = drawstrans[:, k, :]
-                drawstrans[:, k, :] = (np.sqrt(2*drawstrans) - 1)*(drawstrans <= .5) +\
-                    (1 - np.sqrt(2*(1 - drawstrans)))*(drawstrans > .5)
+                drawstrans[:, k, :] = (np.sqrt(2*draws_k) - 1)*(draws_k <= .5) +\
+                    (1 - np.sqrt(2*(1 - draws_k)))*(draws_k > .5)
             elif dist == 'u':  # Uniform
                 drawstrans[:, k, :] = 2*drawstrans[:, k, :] - 1
         return draws, drawstrans  # (N,Kr,R)
