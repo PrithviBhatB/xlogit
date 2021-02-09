@@ -571,6 +571,7 @@ class MixedLogit(ChoiceModel):
                 # gr_b = (obs prob minus pred. prob) * obs. var * rand draw * der(RV)
                 #  TODO: Check
                 temp_chol = chol_mat if chol_mat.size != 0 else np.diag(Brtrans_w)
+                # TODO: CHECK if rvtransdist goes through correctly
                 dertrans = self._compute_derivatives(betas, draws=drawstrans, dist=self.rvtransdist, chol_mat=temp_chol, K=self.Krtrans)
                 grtrans_b = np.einsum('npjr, npjk -> nkr', ymp, Xrtrans_lmda)*dertrans
                 # for s.d. (obs - pred) * obs var * der rand coef * rand draw
@@ -681,7 +682,7 @@ class MixedLogit(ChoiceModel):
         der = dev.np.ones((N, Kr, R))
         dist = dist if dist else self.rvdist
         if any(set(dist).intersection(['ln', 'tn'])):  # If any ln or tn
-            _, betas_random = self._transform_betas(betas, draws, chol_mat=chol_mat)
+            _, betas_random = self._transform_betas(betas, draws, dist, chol_mat=chol_mat)
             for k, dist in enumerate(dist):
                 if dist == 'ln':
                     der[:, k, :] = betas_random[:, k, :]
@@ -689,7 +690,7 @@ class MixedLogit(ChoiceModel):
                     der[:, k, :] = 1*(betas_random[:, k, :] > 0)
         return der
 
-    def _transform_betas(self, betas, draws, trans=False, chol_mat=None):
+    def _transform_betas(self, betas, draws, index, trans=False, chol_mat=None):
         """Compute the products between the betas and the random coefficients.
 
         This method also applies the associated mixing distributions
@@ -702,7 +703,7 @@ class MixedLogit(ChoiceModel):
         # TODO: Consider randtrans?
         betas_random = br_mean[None, :, None] + np.matmul(chol_mat, draws)
 
-        betas_random = self._apply_distribution(betas_random, self.rvdist,
+        betas_random = self._apply_distribution(betas_random, index,
                                                 draws=draws)
         return betas_fixed, betas_random
 

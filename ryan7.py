@@ -30,7 +30,7 @@ model.fit(X, y,
         #   isvars=[],
         #   grad=False,
         #   hess=False,
-          # halton=False,
+          halton=False,
           tol=1e-4,
         #   method='L-BFGS-B',
           n_draws=400)

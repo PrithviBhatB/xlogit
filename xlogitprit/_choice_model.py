@@ -296,7 +296,7 @@ class ChoiceModel(ABC):
                  for j in self.alternatives if j != self.base_alt]
         lambda_names_fixed = ["lambda.{}".format(transvar) for transvar in fixedtransvars]
         lambda_names_rand = ["lambda.{}".format(transvar) for transvar in randtransvars]
-        randvars = [x for x in self.randvars]
+        randvars = [x for x in self.varnames if x in self.randvars]
         asvars_names = [x for x in asvars if (x not in self.randvars) and
                                              (x not in fixedtransvars) and
                                              (x not in randtransvars)]
