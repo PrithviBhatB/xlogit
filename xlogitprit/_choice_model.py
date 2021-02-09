@@ -306,8 +306,6 @@ class ChoiceModel(ABC):
         br_w_names = []
         if (self.correlation is not True and not isinstance(self.correlation, list)):
             if(hasattr(self, "rvidx")):  # avoid errors with multinomial logit
-                print('self.varnames_full', self.varnames_full)
-                print('self.rvidx', self.rvidx)
                 if self.fit_intercept or len(self.isvars):
                     br_w_names = np.char.add("sd.", self.varnames_full[self.rvidx])
                 else:
