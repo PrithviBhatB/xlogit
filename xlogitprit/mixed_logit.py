@@ -718,7 +718,7 @@ class MixedLogit(ChoiceModel):
         else:
             if self.randvars:
                 draws = self._get_random_draws(sample_size, n_draws,
-                                               np.sum(self.rvdist))
+                                               np.sum(self.rvidx))
             if self.randtransvars:          
                 drawstrans = self._get_random_draws(sample_size, n_draws,
                                                     np.sum(self.rvtransidx))
