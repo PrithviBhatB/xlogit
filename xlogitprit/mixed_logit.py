@@ -402,8 +402,6 @@ class MixedLogit(ChoiceModel):
         if dev.using_gpu:
             betas = dev.to_gpu(betas)
 
-        print('betasdebug', betas)
-
         beta_segment_names = ["Bf", "Br_b", "chol", "Br_w", "Bftrans",
                               "flmbda", "Brtrans_b", "Brtrans_w", "rlmda"]
         var_list = dict()
@@ -641,8 +639,6 @@ class MixedLogit(ChoiceModel):
 
     def _apply_distribution(self, betas_random, index=None, draws=None):
         index = index if (index is not None) else self.rvdist
-        print('index', index)
-        print('betas_random', betas_random.shape)
         for k, dist in enumerate(index):
             if dist == 'ln':
                 betas_random[:, k, :] = dev.np.exp(betas_random[:, k, :])
@@ -685,9 +681,7 @@ class MixedLogit(ChoiceModel):
         Kr = K if K else self.Kr
 
         der = dev.np.ones((N, Kr, R))
-        print('distcd1', dist)
         dist = dist if dist else self.rvdist
-        print('distcd2', dist)
 
         if any(set(dist).intersection(['ln', 'tn'])):  # If any ln or tn
             _, betas_random = self._transform_betas(betas, draws, dist,
@@ -705,14 +699,10 @@ class MixedLogit(ChoiceModel):
 
         This method also applies the associated mixing distributions
         """
-        print('trans', trans)
-        print('self.Kr', self.Krtrans)
         if trans:
             br_mean = betas[-3*self.Krtrans:-2*self.Krtrans]  # get pos from end array
             br_sd = betas[-2*self.Krtrans:-self.Krtrans]
             betas_random = br_mean[None, :, None] + draws*br_sd[None, :, None]
-            print('br_mean', br_mean)
-            print('br_sd', br_sd)
             betas_fixed = []
             betas_random = self._apply_distribution(betas_random, index,
                                                     draws=draws)
