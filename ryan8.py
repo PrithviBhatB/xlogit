@@ -13,7 +13,7 @@ X = df[varnames].values
 
 # isvarnames = []
 
-randvars = {'pf': 't', 'cl': 't', 'loc': 't', 'wk': 't', 'tod': 'n', 'seas': 'n'}
+randvars = {'cl': 'n', 'loc': 'ln', 'wk': 'n', 'tod': 'n', 'seas': 'n'}
 alts = [1, 2, 3, 4]
 np.random.seed(123)
 model = MixedLogit()
@@ -28,6 +28,7 @@ model.fit(X, y,
           isvars=[],
           halton=True,
           correlation=True,
+          transvars=['cl', 'loc'],
         #   method="L-BFGS-B",
         #   tol=1e-3,
         #   hess=False,

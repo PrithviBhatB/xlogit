@@ -38,7 +38,7 @@ df['asc_car'] = np.ones(len(df))*(df['alt'] == 'car')
 varnames=['asc_car', 'asc_train', 'cost', 'time']
 model = MixedLogit()
 model.fit(X=df[varnames], y=df['CHOICE'], varnames=varnames, alts=df['alt'],
-          transvars=['cost'],
+        #   transvars=['cost'],
           ids=df['custom_id'], avail=df['av'], randvars={'time': 'n'}, n_draws=2000,
           tol=1e-4)
 model.summary()

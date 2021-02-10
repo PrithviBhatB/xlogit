@@ -402,6 +402,8 @@ class MixedLogit(ChoiceModel):
         if dev.using_gpu:
             betas = dev.to_gpu(betas)
 
+        print('betasdebug', betas)
+
         beta_segment_names = ["Bf", "Br_b", "chol", "Br_w", "Bftrans",
                               "flmbda", "Brtrans_b", "Brtrans_w", "rlmda"]
         var_list = dict()
@@ -572,7 +574,7 @@ class MixedLogit(ChoiceModel):
                 #  TODO: Check
                 temp_chol = chol_mat if chol_mat.size != 0 else np.diag(Brtrans_w)
                 # TODO: CHECK if rvtransdist goes through correctly
-                dertrans = self._compute_derivatives(betas, draws=drawstrans, dist=self.rvtransdist, chol_mat=temp_chol, K=self.Krtrans)
+                dertrans = self._compute_derivatives(betas, draws=drawstrans, dist=self.rvtransdist, chol_mat=temp_chol, K=self.Krtrans, trans=True)
                 grtrans_b = np.einsum('npjr, npjk -> nkr', ymp, Xrtrans_lmda)*dertrans
                 # for s.d. (obs - pred) * obs var * der rand coef * rand draw
                 grtrans_w = np.einsum('npjr, npjk -> nkr', ymp, Xrtrans_lmda)*dertrans*drawstrans
@@ -639,6 +641,8 @@ class MixedLogit(ChoiceModel):
 
     def _apply_distribution(self, betas_random, index=None, draws=None):
         index = index if (index is not None) else self.rvdist
+        print('index', index)
+        print('betas_random', betas_random.shape)
         for k, dist in enumerate(index):
             if dist == 'ln':
                 betas_random[:, k, :] = dev.np.exp(betas_random[:, k, :])
@@ -675,14 +679,20 @@ class MixedLogit(ChoiceModel):
             panel_info = np.ones((N, P))
         return Xbal, ybal, panel_info
 
-    def _compute_derivatives(self, betas, draws, dist=None, K=None, chol_mat=None):
+    def _compute_derivatives(self, betas, draws, dist=None, K=None, 
+                             chol_mat=None, trans=False):
         N, R = draws.shape[0], draws.shape[2]
         Kr = K if K else self.Kr
 
         der = dev.np.ones((N, Kr, R))
+        print('distcd1', dist)
         dist = dist if dist else self.rvdist
+        print('distcd2', dist)
+
         if any(set(dist).intersection(['ln', 'tn'])):  # If any ln or tn
-            _, betas_random = self._transform_betas(betas, draws, dist, chol_mat=chol_mat)
+            _, betas_random = self._transform_betas(betas, draws, dist,
+                                                    chol_mat=chol_mat,
+                                                    trans=trans)
             for k, dist in enumerate(dist):
                 if dist == 'ln':
                     der[:, k, :] = betas_random[:, k, :]
@@ -695,16 +705,29 @@ class MixedLogit(ChoiceModel):
 
         This method also applies the associated mixing distributions
         """
-        # Extract coeffiecients from betas array
-        # Kf = self.Kf # Number of fixed coeff
-        betas_fixed = betas[0:self.Kf]  # First Kf positions
-        br_mean = betas[self.Kf:self.Kf+self.Kr]
-        # Compute: betas = mean + sd*draws
-        # TODO: Consider randtrans?
-        betas_random = br_mean[None, :, None] + np.matmul(chol_mat, draws)
+        print('trans', trans)
+        print('self.Kr', self.Krtrans)
+        if trans:
+            br_mean = betas[-3*self.Krtrans:-2*self.Krtrans]  # get pos from end array
+            br_sd = betas[-2*self.Krtrans:-self.Krtrans]
+            betas_random = br_mean[None, :, None] + draws*br_sd[None, :, None]
+            print('br_mean', br_mean)
+            print('br_sd', br_sd)
+            betas_fixed = []
+            betas_random = self._apply_distribution(betas_random, index,
+                                                    draws=draws)
+        else:
+            # Extract coeffiecients from betas array
+            # Kf = self.Kf # Number of fixed coeff
+            betas_fixed = betas[0:self.Kf]  # First Kf positions
+            br_mean = betas[self.Kf:self.Kf+self.Kr]  # TODO: this is for fixed tho?
 
-        betas_random = self._apply_distribution(betas_random, index,
-                                                draws=draws)
+            # Compute: betas = mean + sd*draws
+            # TODO: Consider randtrans?
+            betas_random = br_mean[None, :, None] + np.matmul(chol_mat, draws)
+
+            betas_random = self._apply_distribution(betas_random, index,
+                                                    draws=draws)
         return betas_fixed, betas_random
 
     def _generate_draws(self, sample_size, n_draws, halton=True):
