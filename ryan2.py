@@ -30,7 +30,10 @@ model.fit(X, y,
           isvars=[],
           # grad=False,
           # hess=False,
+          tol=1e-8,
           halton=False,
-        #   method='L-BFGS-B',
-          n_draws=400)
+          method='L-BFGS-B',
+          n_draws=100,
+          # verbose=False
+          )
 model.summary()

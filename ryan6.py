@@ -1,24 +1,24 @@
 import pandas as pd
 import numpy as np
 
-from xlogitprit import MixedLogit
+from xlogitprit import MultinomialLogit
 
 df = pd.read_csv("https://raw.githubusercontent.com/arteagac/xlogit/master/examples/data/fishing_long.csv")
 
 
-varnames = ['price', 'catch', 'income']
+varnames = ['price', 'catch']
 X = df[varnames]
 y = df['choice']
 asvarnames = ['price', 'catch']
-isvarnames = ['income']
+isvarnames = []
 rand_vars = {'price': 'n'}
 alts = [1, 2, 3, 4]
 # choice_id = df['chid']
 
-model = MixedLogit()
+model = MultinomialLogit()
 
 model.fit(X, y, varnames=varnames, alts=alts,
-          isvars=isvarnames, randvars=rand_vars,
-          fit_intercept=True, tol=1e-2
+          isvars=isvarnames, transvars=['price'], #randvars=rand_vars, #transvars=['price', 'catch'],
+          fit_intercept=True#, hess=False, grad=False
           )
 model.summary()

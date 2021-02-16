@@ -107,18 +107,21 @@ class ChoiceModel(ABC):
         self.maxiter = maxiter
         self.panels = panels
 
-    def _post_fit(self, optimization_res, coeff_names, sample_size, verbose=1):
+    def _post_fit(self, optimization_res, coeff_names, sample_size, hess_inv=None, verbose=1):
         self.convergence = optimization_res['success']
         self.coeff_ = optimization_res['x']
         # convert hess inverse for L-BFGS-B optimisation method
-        if hasattr(optimization_res, 'hess_inv'):
-            if (isinstance(optimization_res['hess_inv'], sc.optimize.lbfgsb.LbfgsInvHessProduct)):
-                hess = optimization_res['hess_inv'].todense()
-            else:
-                hess = optimization_res['hess_inv']
-            self.stderr = np.sqrt(np.diag(np.array(hess)))
-        else:
-            self.stderr = np.zeros_like(self.coeff_)
+        try:
+            self.stderr = np.sqrt(np.diag(optimization_res['hess_inv']))
+        except Exception:
+            if hasattr(optimization_res, 'hess_inv'):
+                if (isinstance(optimization_res['hess_inv'], sc.optimize.lbfgsb.LbfgsInvHessProduct)):
+                    hess = optimization_res['hess_inv'].todense()
+                    self.stderr = np.sqrt(np.diag(np.array(hess)))
+                else:
+                    self.stderr = np.zeros_like(self.coeff_)
+        if hasattr(self, 'Hinv'):
+            self.stderr = np.sqrt(np.diag(np.array(self.Hinv)))
         self.zvalues = np.nan_to_num(self.coeff_/self.stderr)
         self.pvalues = 2*t.pdf(-np.abs(self.zvalues), df=sample_size)
         self.loglikelihood = -optimization_res['fun']
@@ -132,7 +135,8 @@ class ChoiceModel(ABC):
         if not self.convergence and verbose > 0:
             print("**** The optimization did not converge after {} "
                   "iterations. ****".format(self.total_iter))
-            print("Message: "+optimization_res['message'])
+            if hasattr(optimization_res, 'message'):
+                print("Message: " + str(optimization_res['message']))
 
     def _setup_design_matrix(self, X):
         """Setups and reshapes input data after adding isvars and intercept.
@@ -265,7 +269,6 @@ class ChoiceModel(ABC):
                         np.repeat(self.varnames[pos], (J - 2)))  # For easier varname logic for coeff names 
             else:
                 for pos in ispos:
-                    print('self.varnames', self.varnames)
                     self.varnames_full = np.insert(np.array(self.varnames, dtype="<U16"), pos,
                         np.repeat(self.varnames[pos], (J - 2)))  # For easier varname logic for coeff names 
                 # self.varnames_full = np.insert(np.array(self.varnames, dtype="<U16"), ispos,

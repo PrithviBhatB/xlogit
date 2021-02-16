@@ -40,5 +40,6 @@ model = MixedLogit()
 model.fit(X=df[varnames], y=df['CHOICE'], varnames=varnames, alts=df['alt'],
         #   transvars=['cost'],
           ids=df['custom_id'], avail=df['av'], randvars={'time': 'n'}, n_draws=2000,
-          tol=1e-4)
+          # tol=1e-10
+          )
 model.summary()

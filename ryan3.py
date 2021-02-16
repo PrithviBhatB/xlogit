@@ -22,9 +22,9 @@ model.fit(X, y, varnames=varnames,
           # grad=False,
           # hess=False,
           halton=False,
-        #   init_coeff=initial_coeffs,
+          init_coeff=np.ones(5),
           # correlation=True,
-        #   method="Nelder-Mead",
+          method="L-BFGS-B",
         #   fit_intercept=True
           )
 model.summary()

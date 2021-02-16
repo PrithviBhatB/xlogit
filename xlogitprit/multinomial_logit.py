@@ -6,7 +6,7 @@ Implements multinomial and conditional logit models
 import numpy as np
 from ._choice_model import ChoiceModel
 from .boxcox_functions import boxcox_transformation, boxcox_param_deriv
-from scipy.optimize import minimize
+from scipy.optimize import minimize, newton
 import warnings
 
 class MultinomialLogit(ChoiceModel):
@@ -15,8 +15,8 @@ class MultinomialLogit(ChoiceModel):
     def fit(self, X, y, varnames=None, alts=None, isvars=None, transvars=None,
             transformation=None, ids=None, weights=None, avail=None,
             base_alt=None, fit_intercept=False, init_coeff=None, maxiter=2000,
-            random_state=None, tol=1e-5, grad=None, hess=None, verbose=1,
-            method="BFGS"):
+            random_state=None, tol=1e-5, grad=True, hess=True, verbose=1,
+            method="L-BFGS-B", scipy_optimisation=True):
         """Fit multinomial and/or conditional logit models.
 
         Parameters
@@ -77,6 +77,8 @@ class MultinomialLogit(ChoiceModel):
         grad : 
 
         hess :
+
+        scipy_optimisation :
 
         Returns
         -------
@@ -147,9 +149,14 @@ class MultinomialLogit(ChoiceModel):
         y = y.reshape(self.N, self.J)
 
         # Call optimization routine
-        optimizat_res = self._scipy_bfgs_optimization(betas, X, y, weights,
+        if scipy_optimisation:
+            optimizat_res = self._scipy_bfgs_optimization(betas, X, y, weights,
                                                       avail, maxiter, tol, jac)
-        self._post_fit(optimizat_res, Xnames, int(1182/4), verbose)
+
+        else:
+            optimizat_res = self._bfgs_optimization(betas, X, y, weights,
+                                                      avail, maxiter) #, tol, jac)
+        self._post_fit(optimizat_res, Xnames, X.shape[0], verbose)
 
     def _compute_probabilities(self, betas, X, avail):
         Xf = X[:, :, self.fxidx]
@@ -226,12 +233,13 @@ class MultinomialLogit(ChoiceModel):
             Hinv = np.linalg.pinv(H)
 
         grad = np.sum(grad, axis=0)
-
         result = (-loglik)
+        
 
         if self.grad:
             if self.hess:
-                result = (-loglik, -grad, -Hinv)
+                self.Hinv = Hinv
+                result = (-loglik, -grad, Hinv)
             else:
                 result = (-loglik, -grad)
 
@@ -240,6 +248,7 @@ class MultinomialLogit(ChoiceModel):
         return (-loglik, -grad)
 
     def _scipy_bfgs_optimization(self, betas, X, y, weights, avail, maxiter, tol, jac):
+        tol = 1e-7
         res = minimize(self._loglik_and_gradient,
                        betas,
                        args=(X, y, weights, avail),

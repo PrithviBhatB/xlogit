@@ -18,5 +18,5 @@ model.fit(X, y, varnames = varnames,
           randvars = {'price': 'ln', 'operating_cost': 'n',
                       'range': 'ln', 'electric':'n', 'hybrid': 'n'}, 
           panels=df.person_id.values, #Panel column
-          n_draws = 100) 
+          n_draws = 200) 
 model.summary()

@@ -23,6 +23,14 @@ Notations
 """
 
 
+class BadGradientException(Exception):
+    """Custom exception when scipy minimisation (particularly L-BFGS-B)
+       fails to converge due to ABNORMAL_TERMINATION_IN_LNSRCH which
+       is typically caused by the function gradient being inaccurate
+    """
+    pass
+
+
 class MixedLogit(ChoiceModel):
     """Class for estimation of Mixed Logit Models
 
@@ -76,8 +84,8 @@ class MixedLogit(ChoiceModel):
             ids=None, transformation=None, weights=None, avail=None,
             randvars=None, panels=None, base_alt=None, fit_intercept=False,
             init_coeff=None, maxiter=2000, random_state=None, correlation=None,
-            n_draws=200, halton=True, verbose=1, tol=1e-5, hess=True,
-            grad=True, method="bfgs"):
+            n_draws=200, halton=True, verbose=1, tol=1e-6, hess=True,
+            grad=True, method="L-BFGS-B"):
         """Fit Mixed Logit models.
 
         Parameters
@@ -307,14 +315,16 @@ class MixedLogit(ChoiceModel):
         bound_dict = {
             "bf": (any_bound, self.Kf),
             "br_b": (any_bound, self.Kr),
-            "chol": (corr_bound, self.Kchol),
-            "br_w": (positive_bound, self.Kr - self.correlationLength),
+            "chol": (any_bound, self.Kchol), # TODO: bounds w/ s.d. in chol?
+            "br_w": (any_bound, self.Kr - self.correlationLength),
             "bf_trans": (any_bound, self.Kftrans),
             "flmbda": (lmda_bound, self.Kftrans),
             "br_trans_b": (any_bound, self.Krtrans),
-            "br_trans_w": (positive_bound, self.Krtrans),
+            "br_trans_w": (any_bound, self.Krtrans),
             "rlmbda": (lmda_bound, self.Krtrans)
         }
+
+        loose_bound_dict = {}
 
         # list comrephension to add number of bounds for each variable type
         # bound[1][0] - the bound range
@@ -323,8 +333,13 @@ class MixedLogit(ChoiceModel):
                 for bound in bound_dict.items() if bound[1][1] > 0]
         # convert into appropriate format for L-BFGS-B
         bnds = [tuple(itertools.chain.from_iterable(bnds))][0]
+        # tol = 1e-1
+        # optimizat_res = None
 
-        if method == 'L-BFGS-B':
+        # if tol is None:
+        #     tol = np.finfo(np.float64).eps ** 0.3333
+
+        try:
             optimizat_res = \
                 minimize(
                     self._loglik_gradient,
@@ -332,34 +347,121 @@ class MixedLogit(ChoiceModel):
                     jac=jac,
                     method=method,
                     args=(X, y, panel_info, draws, drawstrans, weights,
-                          avail),
+                            avail),
                     tol=tol,
                     bounds=bnds,
                     options={
                         'ftol': tol,
+                        'gtol': tol,
                         'maxiter': maxiter,
-                        'disp': verbose > 0
+                        'disp': verbose > 0,
+                        # 'maxcor': 100,
+                        # 'maxls': 100,
+                        # 'maxfun': 1000
                     }
                 )
-        else:
-            # minimizer_kwargs = {"method": "BFGS", "args": (X, y, panel_info, draws, drawstrans, weights, avail)}
-            # ret = basinhopping(self._loglik_gradient, betas, minimizer_kwargs=minimizer_kwargs, niter=200)
+            if optimizat_res['message'].decode() == \
+               "ABNORMAL_TERMINATION_IN_LNSRCH":  # decode bytes -> str
+                raise BadGradientException
+        except BadGradientException:
+            # set grad, hess to False to allow for scipy to estimate grad,hess
+            # when the function hess, grad leads to a bad gradient
+            self.grad = False
+            self.hess = False
             optimizat_res = \
                 minimize(
                     self._loglik_gradient,
                     betas,
-                    jac=jac,
+                    jac=False,
                     method=method,
-                    args=(X, y, panel_info, draws, drawstrans,
-                          weights, avail),
+                    args=(X, y, panel_info, draws, drawstrans, weights,
+                            avail),
                     tol=tol,
+                    bounds=bnds,
                     options={
+                        'ftol': tol,
                         'gtol': tol,
                         'maxiter': maxiter,
-                        'disp': verbose > 0
+                        'disp': verbose > 0,
+                        # 'maxcor': 100,
+                        # 'maxls': 100,
+                        # 'maxfun': 1000
                     }
                 )
-        self._post_fit(optimizat_res, Xnames, N, verbose)
+        # copied code from choice model to check standard errors
+        #         try:
+            if hasattr(optimizat_res, 'hess_inv'):
+                if (isinstance(optimizat_res['hess_inv'], scipy.optimize.lbfgsb.LbfgsInvHessProduct)):
+                    hess = optimizat_res['hess_inv'].todense()
+                    self.stderr = np.sqrt(np.diag(np.array(hess)))
+                else:
+                    self.stderr = np.zeros_like(self.coeff_)
+            if hasattr(self, 'Hinv'):
+                self.stderr = np.sqrt(np.diag(np.array(self.Hinv)))
+            if 0 in self.stderr:
+                optimizat_res = \
+                    minimize(
+                        self._loglik_gradient,
+                        betas,
+                        jac=False,
+                        method="bfgs",
+                        args=(X, y, panel_info, draws, drawstrans, weights,
+                                avail),
+                        tol=tol,
+                        bounds=bnds,
+                        options={
+                            'ftol': tol,
+                            'gtol': tol,
+                            'maxiter': maxiter,
+                            'disp': verbose > 0,
+                            # 'maxcor': 100,
+                            # 'maxls': 100,
+                            # 'maxfun': 1000
+                        }
+                    )
+        # else:
+        #     # minimizer_kwargs = {"method": "BFGS", "args": (X, y, panel_info, draws, drawstrans, weights, avail)}
+        #     # ret = basinhopping(self._loglik_gradient, betas, minimizer_kwargs=minimizer_kwargs, niter=200)
+        #     optimizat_res = \
+        #         minimize(
+        #             self._loglik_gradient,
+        #             betas,
+        #             jac=jac,
+        #             method=method,
+        #             args=(X, y, panel_info, draws, drawstrans,
+        #                   weights, avail),
+        #             tol=tol,
+        #             options={
+        #                 'gtol': tol,
+        #                 'maxiter': maxiter,
+        #                 'disp': verbose > 0
+        #             }
+        #         )
+        if optimizat_res['success'] == False:
+            self.hess = hess
+            self.grad = grad
+            optimizat_res = \
+                minimize(
+                    self._loglik_gradient,
+                    betas,
+                    jac=True,
+                    method="bfgs",
+                    args=(X, y, panel_info, draws, drawstrans, weights,
+                            avail),
+                    tol=tol,
+                    bounds=bnds,
+                    options={
+                        'ftol': tol,
+                        'gtol': tol,
+                        'maxiter': maxiter,
+                        'disp': verbose > 0,
+                        # 'maxcor': 100,
+                        # 'maxls': 100,
+                        # 'maxfun': 1000
+                    }
+                )
+
+        self._post_fit(optimizat_res, Xnames, N, verbose) # TODO: IF SELF
 
     def _compute_probabilities(self, betas, X, panel_info, draws, drawstrans,
                                avail):
@@ -592,15 +694,19 @@ class MixedLogit(ChoiceModel):
         # weighted average of the gradient when panels data is used
        
         # Hessian estimation
-        if self.hess:
-            H = g.T.dot(g)
-            H[np.isnan(H)] = 1e-30  # TODO: why nan!!
-            H[np.isposinf(H)] = 1e+30
-            H[np.isneginf(H)] = -1e+30
+        # if self.hess:
+        H = g.T.dot(g)
+        H[np.isnan(H)] = 1e-30  # TODO: why nan!!
+        H[np.isposinf(H)] = 1e+30
+        H[np.isneginf(H)] = -1e+30
 
-            # H[H > 1e+30] = 1e+30
-            # H[H < -1e+30] = -1e+30
-            Hinv = np.linalg.pinv(H)
+        # H[H > 1e+30] = 1e+30
+        # H[H < -1e+30] = -1e+30
+        # try:
+        #     Hinv = np.lingalg.inv(H)
+        # except Exception:
+        Hinv = np.linalg.pinv(H)
+        self.Hinv = Hinv
 
         self.total_fun_eval += 1
 
@@ -614,9 +720,9 @@ class MixedLogit(ChoiceModel):
         # log-lik
 
         result = (-loglik)
-
         if self.grad:
             if self.hess:
+                # self.Hinv = Hinv
                 result = (-loglik, -g, -Hinv)
             else:
                 result = (-loglik, -g)

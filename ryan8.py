@@ -27,12 +27,12 @@ model.fit(X, y,
           panels=df.id.values,
           isvars=[],
           halton=True,
-          correlation=True,
+          # correlation=True,
           transvars=['cl', 'loc'],
-        #   method="L-BFGS-B",
-        #   tol=1e-3,
-        #   hess=False,
-        #   grad=False,
+          method="L-BFGS-B",
+          # tol=1e-8,
+          # hess=False,
+          # grad=False,
         #   weights=None,
         #   avail=None,
         #   base_alt=None,
@@ -40,7 +40,7 @@ model.fit(X, y,
         #   init_coeff=None,
         #   maxiter=2000,
         #   random_state=None,
-        #   verbose=1
-          n_draws=400
+          verbose=1,
+          n_draws=100
 )
 model.summary()
