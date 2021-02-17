@@ -23,13 +23,6 @@ Notations
 """
 
 
-class BadGradientException(Exception):
-    """Custom exception when scipy minimisation (particularly L-BFGS-B)
-       fails to converge due to ABNORMAL_TERMINATION_IN_LNSRCH which
-       is typically caused by the function gradient being inaccurate
-    """
-    pass
-
 
 class MixedLogit(ChoiceModel):
     """Class for estimation of Mixed Logit Models
@@ -85,7 +78,7 @@ class MixedLogit(ChoiceModel):
             randvars=None, panels=None, base_alt=None, fit_intercept=False,
             init_coeff=None, maxiter=2000, random_state=None, correlation=None,
             n_draws=200, halton=True, verbose=1, tol=1e-6, hess=True,
-            grad=True, method="L-BFGS-B"):
+            grad=True, method="bfgs"):
         """Fit Mixed Logit models.
 
         Parameters
@@ -188,12 +181,17 @@ class MixedLogit(ChoiceModel):
                       correlation, randvars)
         self.randvarsdict = randvars
         #  random variables not transformed
-        self.randvars = [x for x in self.randvars if x not in transvars]
-        #  random variables that are transformed
-        self.randtransvars = [x for x in transvars if (x in randvars) and
-                                                      (x not in self.randvars)]
-        self.fixedtransvars = [x for x in transvars if x not in
-                               self.randtransvars]
+        with warnings.catch_warnings():
+            # CURRENTLY IGNORING FUTURE WARNING
+            # CURRENT PY: 3.8.3, numpy: 1.18.5
+            warnings.simplefilter(action='ignore', category=FutureWarning)
+
+            self.randvars = [x for x in self.randvars if x not in transvars]
+            #  random variables that are transformed
+            self.randtransvars = [x for x in transvars if (x in randvars) and
+                                                            (x not in self.randvars)]
+            self.fixedtransvars = [x for x in transvars if x not in
+                                    self.randtransvars]
         self.n_draws = n_draws
         # divide the variables in varnames into fixed, fixed transformed,
         # random, random transformed by getting 4 index arrays
@@ -324,7 +322,7 @@ class MixedLogit(ChoiceModel):
             "rlmbda": (lmda_bound, self.Krtrans)
         }
 
-        loose_bound_dict = {}
+        # loose_bound_dict = {}
 
         # list comrephension to add number of bounds for each variable type
         # bound[1][0] - the bound range
@@ -339,127 +337,26 @@ class MixedLogit(ChoiceModel):
         # if tol is None:
         #     tol = np.finfo(np.float64).eps ** 0.3333
 
-        try:
-            optimizat_res = \
-                minimize(
-                    self._loglik_gradient,
-                    betas,
-                    jac=jac,
-                    method=method,
-                    args=(X, y, panel_info, draws, drawstrans, weights,
-                            avail),
-                    tol=tol,
-                    bounds=bnds,
-                    options={
-                        'ftol': tol,
-                        'gtol': tol,
-                        'maxiter': maxiter,
-                        'disp': verbose > 0,
-                        # 'maxcor': 100,
-                        # 'maxls': 100,
-                        # 'maxfun': 1000
-                    }
-                )
-            if optimizat_res['message'].decode() == \
-               "ABNORMAL_TERMINATION_IN_LNSRCH":  # decode bytes -> str
-                raise BadGradientException
-        except BadGradientException:
-            # set grad, hess to False to allow for scipy to estimate grad,hess
-            # when the function hess, grad leads to a bad gradient
-            self.grad = False
-            self.hess = False
-            optimizat_res = \
-                minimize(
-                    self._loglik_gradient,
-                    betas,
-                    jac=False,
-                    method=method,
-                    args=(X, y, panel_info, draws, drawstrans, weights,
-                            avail),
-                    tol=tol,
-                    bounds=bnds,
-                    options={
-                        'ftol': tol,
-                        'gtol': tol,
-                        'maxiter': maxiter,
-                        'disp': verbose > 0,
-                        # 'maxcor': 100,
-                        # 'maxls': 100,
-                        # 'maxfun': 1000
-                    }
-                )
-        # copied code from choice model to check standard errors
-        #         try:
-            if hasattr(optimizat_res, 'hess_inv'):
-                if (isinstance(optimizat_res['hess_inv'], scipy.optimize.lbfgsb.LbfgsInvHessProduct)):
-                    hess = optimizat_res['hess_inv'].todense()
-                    self.stderr = np.sqrt(np.diag(np.array(hess)))
-                else:
-                    self.stderr = np.zeros_like(self.coeff_)
-            if hasattr(self, 'Hinv'):
-                self.stderr = np.sqrt(np.diag(np.array(self.Hinv)))
-            if 0 in self.stderr:
-                optimizat_res = \
-                    minimize(
-                        self._loglik_gradient,
-                        betas,
-                        jac=False,
-                        method="bfgs",
-                        args=(X, y, panel_info, draws, drawstrans, weights,
-                                avail),
-                        tol=tol,
-                        bounds=bnds,
-                        options={
-                            'ftol': tol,
-                            'gtol': tol,
-                            'maxiter': maxiter,
-                            'disp': verbose > 0,
-                            # 'maxcor': 100,
-                            # 'maxls': 100,
-                            # 'maxfun': 1000
-                        }
-                    )
-        # else:
-        #     # minimizer_kwargs = {"method": "BFGS", "args": (X, y, panel_info, draws, drawstrans, weights, avail)}
-        #     # ret = basinhopping(self._loglik_gradient, betas, minimizer_kwargs=minimizer_kwargs, niter=200)
-        #     optimizat_res = \
-        #         minimize(
-        #             self._loglik_gradient,
-        #             betas,
-        #             jac=jac,
-        #             method=method,
-        #             args=(X, y, panel_info, draws, drawstrans,
-        #                   weights, avail),
-        #             tol=tol,
-        #             options={
-        #                 'gtol': tol,
-        #                 'maxiter': maxiter,
-        #                 'disp': verbose > 0
-        #             }
-        #         )
-        if optimizat_res['success'] == False:
-            self.hess = hess
-            self.grad = grad
-            optimizat_res = \
-                minimize(
-                    self._loglik_gradient,
-                    betas,
-                    jac=True,
-                    method="bfgs",
-                    args=(X, y, panel_info, draws, drawstrans, weights,
-                            avail),
-                    tol=tol,
-                    bounds=bnds,
-                    options={
-                        'ftol': tol,
-                        'gtol': tol,
-                        'maxiter': maxiter,
-                        'disp': verbose > 0,
-                        # 'maxcor': 100,
-                        # 'maxls': 100,
-                        # 'maxfun': 1000
-                    }
-                )
+        optimizat_res = \
+            minimize(
+                self._loglik_gradient,
+                betas,
+                jac=jac,
+                method=method,
+                args=(X, y, panel_info, draws, drawstrans, weights,
+                        avail),
+                tol=tol,
+                bounds=bnds if method=="L-BFGS-B" else None,
+                options={
+                    # 'ftol': tol,
+                    # 'gtol': tol,
+                    'maxiter': maxiter,
+                    'disp': verbose > 0,
+                    # 'maxcor': 100,
+                    # 'maxls': 100,
+                    # 'maxfun': 1000
+                }
+            )
 
         self._post_fit(optimizat_res, Xnames, N, verbose) # TODO: IF SELF
 

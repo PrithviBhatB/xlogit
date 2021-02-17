@@ -7,13 +7,14 @@ df = pd.read_csv("https://raw.githubusercontent.com/arteagac/xlogit/master/examp
 varnames = ['cl', 'loc', 'pf', 'wk', 'tod', 'seas']
 y = df['choice'].values
 # choice_var = df['choice']
-df['seas'] = -df['seas']
-df['tod'] = -df['tod']
+df['wk'] = -df['wk']
+# df['tod'] = -df['tod']
 X = df[varnames].values
 
 # isvarnames = []
 
-randvars = {'cl': 'n', 'loc': 'ln', 'wk': 'n', 'tod': 'n', 'seas': 'n'}
+randvars = {'wk': 'ln', 'seas': 'u', 'tod': 'n'}
+corvars = ['wk', 'seas']
 alts = [1, 2, 3, 4]
 np.random.seed(123)
 model = MixedLogit()
@@ -28,8 +29,9 @@ model.fit(X, y,
           isvars=[],
           halton=True,
           # correlation=True,
-          transvars=['cl', 'loc'],
-          method="L-BFGS-B",
+          # transvars=['cl', 'loc'],
+          # method="L-BFGS-B",
+          correlation=corvars,
           # tol=1e-8,
           # hess=False,
           # grad=False,

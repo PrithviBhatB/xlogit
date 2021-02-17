@@ -120,8 +120,9 @@ class ChoiceModel(ABC):
                     self.stderr = np.sqrt(np.diag(np.array(hess)))
                 else:
                     self.stderr = np.zeros_like(self.coeff_)
-        if hasattr(self, 'Hinv'):
-            self.stderr = np.sqrt(np.diag(np.array(self.Hinv)))
+            if hasattr(self, 'Hinv'):
+                self.stderr = np.sqrt(np.diag(np.array(self.Hinv)))
+
         self.zvalues = np.nan_to_num(self.coeff_/self.stderr)
         self.pvalues = 2*t.pdf(-np.abs(self.zvalues), df=sample_size)
         self.loglikelihood = -optimization_res['fun']

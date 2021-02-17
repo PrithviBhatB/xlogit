@@ -22,8 +22,8 @@ model.fit(
   # isvars=['income'],
   # grad=False,
   # hess=False,
-  tol=1e-4,
-  method="L-BFGS-B",
+  tol=1e-3,
+  # method="L-BFGS-B",
   fit_intercept=True,
   varnames=varnames
 )

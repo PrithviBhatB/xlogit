@@ -18,6 +18,6 @@ model = MultinomialLogit()
 maxiter = 1000
 
 model.fit(X=X, y=y, varnames=varnames, isvars=[], alts=alts, fit_intercept=True,
-          transformation="boxcox", maxiter=maxiter, tol=1e-3, method="L-BFGS-B")
+          transformation="boxcox", maxiter=maxiter)
 
 model.summary()
