@@ -72,8 +72,8 @@ def boxcox_transformation_mixed(X_matrix, lmdas):
             matrix after boxcox transformation
     """
     X_matrix[X_matrix == 0] = 1e-30  # avoids errors causes by log(0)
-    if not (X_matrix > 0).all():
-        raise Exception("All elements must be positive")
+    # if not (X_matrix > 0).all():
+    #     raise Exception("All elements must be positive")
     bxcx_X = np.zeros_like(X_matrix)
     for i in range(len(lmdas)):
         if lmdas[i] == 0:

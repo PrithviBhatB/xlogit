@@ -19,6 +19,6 @@ model = MultinomialLogit()
 
 model.fit(X, y, varnames=varnames, alts=alts,
           isvars=isvarnames, transvars=['price'], #randvars=rand_vars, #transvars=['price', 'catch'],
-          fit_intercept=True, tol=1e-4#, hess=False, grad=False
+          fit_intercept=True #, hess=False, grad=False
           )
 model.summary()

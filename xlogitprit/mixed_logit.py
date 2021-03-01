@@ -77,7 +77,7 @@ class MixedLogit(ChoiceModel):
             ids=None, transformation=None, weights=None, avail=None,
             randvars=None, panels=None, base_alt=None, fit_intercept=False,
             init_coeff=None, maxiter=2000, random_state=None, correlation=None,
-            n_draws=200, halton=True, verbose=1, tol=1e-6, hess=True,
+            n_draws=200, halton=True, verbose=1, ftol=1e-5, gtol=1e-5, hess=True,
             grad=True, method="bfgs"):
         """Fit Mixed Logit models.
 
@@ -155,7 +155,9 @@ class MixedLogit(ChoiceModel):
             Verbosity of messages to show during estimation. 0: No messages,
             1: Some messages, 2: All messages
 
-        tol : # TODO
+        ftol : # TODO
+
+        gtol: 
 
         hess :
 
@@ -288,7 +290,7 @@ class MixedLogit(ChoiceModel):
         n_coeff = self.Kf + self.Kr + self.Kchol + self.Kbw + 2*self.Kftrans +\
             3*self.Krtrans
         if init_coeff is None:
-            betas = np.repeat(.0, n_coeff)
+            betas = np.repeat(.1, n_coeff)
         else:
             betas = init_coeff
             if len(init_coeff) != n_coeff:
@@ -345,11 +347,11 @@ class MixedLogit(ChoiceModel):
                 method=method,
                 args=(X, y, panel_info, draws, drawstrans, weights,
                         avail),
-                tol=tol,
+                tol=ftol,
                 bounds=bnds if method=="L-BFGS-B" else None,
                 options={
                     # 'ftol': tol,
-                    # 'gtol': tol,
+                    'gtol': gtol,
                     'maxiter': maxiter,
                     'disp': verbose > 0,
                     # 'maxcor': 100,
@@ -386,6 +388,9 @@ class MixedLogit(ChoiceModel):
         p = eV/sumeV  # (N,P,J,R)
         p = p*panel_info[:, :, None, None]  # Zero for unbalanced panels
         return p
+
+    def pred_choice():
+        pass
 
     def _loglik_gradient(self, betas, X, y, panel_info, draws, drawstrans,
                          weights, avail):
@@ -494,6 +499,8 @@ class MixedLogit(ChoiceModel):
         eV[np.isneginf(eV)] = -1e+30
         sum_eV = np.sum(eV, axis=2, keepdims=True)
         p = np.divide(eV, sum_eV, out=np.zeros_like(eV), where=(sum_eV != 0))
+        temp_p = np.mean(np.mean(np.mean(p, axis=0), axis=0), axis=1)
+
         p = p*panel_info[:, :, None, None]
         # Joint probability estimation for panels data
         pch = np.sum(y*p, axis=2) # (N, P, R)
@@ -592,18 +599,18 @@ class MixedLogit(ChoiceModel):
        
         # Hessian estimation
         # if self.hess:
-        H = g.T.dot(g)
-        H[np.isnan(H)] = 1e-30  # TODO: why nan!!
-        H[np.isposinf(H)] = 1e+30
-        H[np.isneginf(H)] = -1e+30
+        # H = g.T.dot(g)
+        # H[np.isnan(H)] = 1e-30  # TODO: why nan!!
+        # H[np.isposinf(H)] = 1e+30
+        # H[np.isneginf(H)] = -1e+30
 
         # H[H > 1e+30] = 1e+30
         # H[H < -1e+30] = -1e+30
         # try:
         #     Hinv = np.lingalg.inv(H)
         # except Exception:
-        Hinv = np.linalg.pinv(H)
-        self.Hinv = Hinv
+        # Hinv = np.linalg.pinv(H)
+        # self.Hinv = Hinv
 
         self.total_fun_eval += 1
 
@@ -618,11 +625,11 @@ class MixedLogit(ChoiceModel):
 
         result = (-loglik)
         if self.grad:
-            if self.hess:
-                # self.Hinv = Hinv
-                result = (-loglik, -g, -Hinv)
-            else:
-                result = (-loglik, -g)
+            # if self.hess:
+            #     # self.Hinv = Hinv
+            #     result = (-loglik, -g, -Hinv)
+            # else:
+            result = (-loglik, -g)
 
         return result
 

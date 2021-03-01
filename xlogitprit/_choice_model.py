@@ -255,7 +255,7 @@ class ChoiceModel(ABC):
                               axis=1)
             Xis = X[:, ispos]
             # Multiply dummy representation by the individual specific data
-            Xis = np.einsum('nj,nk->njk', Xis, dummy)
+            Xis = np.einsum('nj,nk->njk', Xis, dummy, dtype="float64")
             Xis = Xis.reshape(P_N, self.J, (self.J-1)*len(ispos))
             if hasattr(self, 'varnames_full'):
                 copy = self.isvars[np.where(self.isvars != '_inter')]

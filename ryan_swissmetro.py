@@ -1,4 +1,4 @@
-from xlogitprit import MixedLogit
+from xlogitprit import MixedLogit, MultinomialLogit
 
 import pandas as pd
 import numpy as np
@@ -35,11 +35,14 @@ df['cost'] = df['cost']*(train_pass==0)/100
 df['asc_train'] = np.ones(len(df))*(df['alt'] == 'train')
 df['asc_car'] = np.ones(len(df))*(df['alt'] == 'car')
 
-varnames=['asc_car', 'asc_train', 'cost', 'time']
-model = MixedLogit()
-model.fit(X=df[varnames], y=df['CHOICE'], varnames=varnames, alts=df['alt'],
-        #   transvars=['cost'],
-          ids=df['custom_id'], avail=df['av'], randvars={'time': 'n'}, n_draws=2000,
-          # tol=1e-10
-          )
+varnames = ['asc_car', 'asc_train', 'cost', 'time', 'luggage_car',
+            'he_sm_train', 'seats', 'ga_sm_train', 'age_train']
+model = MultinomialLogit()
+model.fit(X=df[varnames], y=df['CHOICE'], varnames=varnames, alts=df['alt'])
+# model = MixedLogit()
+# model.fit(X=df[varnames], y=df['CHOICE'], varnames=varnames, alts=df['alt'],
+#         #   transvars=['cost'],
+#           ids=df['custom_id'], avail=df['av'], randvars={'time': 'n'}, n_draws=2000,
+#           # tol=1e-10
+#           )
 model.summary()

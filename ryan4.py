@@ -5,7 +5,7 @@ from xlogitprit import MultinomialLogit
 
 df = pd.read_csv("https://raw.githubusercontent.com/arteagac/xlogit/master/examples/data/electricity_long.csv")
 
-varnames = ["pf", "cl", "loc", "wk", "seas"]
+varnames = ["pf", "cl", "loc", "wk", "tod", "seas"]
 
 X = df[varnames].values
 y = df['choice'].values
@@ -17,7 +17,7 @@ model = MultinomialLogit()
 
 maxiter = 1000
 
-model.fit(X=X, y=y, varnames=varnames, isvars=[], alts=alts, fit_intercept=True,
+model.fit(X=X, y=y, varnames=varnames, isvars=[], alts=alts, #fit_intercept=True,
           transformation="boxcox", maxiter=maxiter)
 
 model.summary()
