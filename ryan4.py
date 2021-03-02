@@ -17,7 +17,7 @@ model = MultinomialLogit()
 
 maxiter = 1000
 
-model.fit(X=X, y=y, varnames=varnames, isvars=[], alts=alts, #fit_intercept=True,
+model.fit(X=X, y=y, varnames=varnames, isvars=[], alts=alts, fit_intercept=True,
           transformation="boxcox", maxiter=maxiter)
 
 model.summary()

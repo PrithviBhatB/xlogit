@@ -8,9 +8,13 @@ from ._choice_model import ChoiceModel
 from .boxcox_functions import boxcox_transformation, boxcox_param_deriv
 import scipy.stats
 # import scipy.optimize
-from scipy.optimize import minimize
+from scipy.optimize import minimize, check_grad
+from scipy.special import logsumexp
 import warnings
 
+# boundary values
+max_comp_val = 1e+300
+min_comp_val = 1e-300
 
 class MultinomialLogit(ChoiceModel):
     """Class for estimation of Multinomial and Conditional Logit Models"""
@@ -157,6 +161,7 @@ class MultinomialLogit(ChoiceModel):
         X = X.astype('float64')
         y = y.astype('float64')
         betas = betas.astype('float64')
+
         # Call optimization routine
         if scipy_optimisation:
             optimizat_res = self._scipy_bfgs_optimization(betas, X, y, weights,
@@ -176,12 +181,12 @@ class MultinomialLogit(ChoiceModel):
         if self.numFixedCoeffs > 0:
             B = betas[0:self.Kf]
             XB = Xf.dot(B)
-        Xtrans_lambda = None
+        Xtrans_lmda = None
         if sum(self.fxtransidx):
             B_transvars = betas[self.numFixedCoeffs:int(self.numFixedCoeffs+(self.numTransformedCoeffs/2))]
             lambdas = betas[int(self.numFixedCoeffs+(self.numTransformedCoeffs/2)):]
             # applying transformations
-            Xtrans_lambda = self.transFunc(X_trans, lambdas)
+            Xtrans_lmda = self.transFunc(X_trans, lambdas)
             XB_trans = Xtrans_lambda.dot(B_transvars)
             XB += XB_trans
         # XB[np.isnan(XB)] = 1e-30
@@ -189,24 +194,41 @@ class MultinomialLogit(ChoiceModel):
         XB[XB < -700] = -700  # avoiding infs
         # XB[np.isposinf(XB)] = 1e+30  # avoiding infs
         # XB[np.isneginf(XB)] = -1e+30  # avoiding infs
+
+        # def logsumexp(x):
+        #     c = x.max()
+        #     return c + np.log(np.sum(np.exp(x - c)))
+
         XB = XB.reshape(self.N, self.J)
+
+        # TODO: Investigate logsumexp more...
+        # logsumexp_XB = np.apply_along_axis(logsumexp, axis=1, arr=XB)
+        # p = np.exp(XB - np.vstack(logsumexp_XB))
+        
+        # if avail is not None:
+        #     p = p*avail
+
+        # eXB = np.exp(XB)
+        # eXB[np.isposinf(eXB)] = 1e+30
+        # eXB[np.isneginf(eXB)] = 1e-30
+        # p = eXB/np.sum(eXB, axis=1, keepdims=True, dtype="float64")  # (N,J)
+
         eXB = np.exp(XB)
         if avail is not None:
             eXB = eXB*avail
-        # eXB[np.isposinf(eXB)] = 1e+30
-        # eXB[np.isneginf(eXB)] = 1e-30
-        p = eXB/np.sum(eXB, axis=1, keepdims=True, dtype="float64")  # (N,J)
-        return p, Xtrans_lambda
+        p = eXB/np.sum(eXB, axis=1, keepdims=True)  # (N,J)
+        return p, Xtrans_lmda
 
     def _loglik_and_gradient(self, betas, X, y, weights, avail):
         p, Xtrans_lmda = self._compute_probabilities(betas, X, avail)
         # Log likelihood
         lik = np.sum(y*p, axis=1, dtype="float64")
-        lik[lik == 0] = 1e-30
+        lik[lik == 0] = min_comp_val
         loglik = np.log(lik)
         if weights is not None:
             loglik = loglik*weights
         loglik = np.sum(loglik, dtype="float64")
+
         # Individual contribution to the gradient
 
         transpos = [self.varnames.tolist().index(i) for i in self.transvars]  # Position of trans vars
@@ -236,35 +258,44 @@ class MultinomialLogit(ChoiceModel):
         if weights is not None:
             grad = grad*weights[:, None]
 
-        # if self.hess:
-        #     H = np.dot(grad.T, grad)
-        #     H[H == 0] = 1e-30
-        #     H[np.isnan(H)] = 1e-30  # TODO: why nans!
-        #     H[H > 1e+30] = 1e+30
-        #     H[H < -1e+30] = -1e+30
-        #     Hinv = np.linalg.pinv(H)
+        if self.hess:
+            H = np.dot(grad.T, grad)
+            H[H == 0] = 1e-30
+            H[np.isnan(H)] = 1e-30  # TODO: why nans!
+            H[H > 1e+30] = 1e+30
+            H[H < -1e+30] = -1e+30
+            Hinv = np.linalg.pinv(H)
+            self.Hinv = Hinv
 
         grad = np.sum(grad, axis=0, dtype=np.float64)
-        # result = (-loglik)
+        result = (-loglik)
 
-        # if self.grad:
-        #     result = (-loglik, -grad)
-        return -loglik, -grad
+        if self.grad:
+            result = (-loglik, -grad)
+        return result
 
+    def dummy_func_val(self, betas, X, y, weights, avail):
+        f, _ = self._loglik_and_gradient(betas, X, y, weights, avail)
+        return f
+
+    def dummy_grad_val(self, betas, X, y, weights, avail):
+        _, g = self._loglik_and_gradient(betas, X, y, weights, avail)
+        return g
 
     def _scipy_bfgs_optimization(self, betas, X, y, weights, avail, maxiter,
                                  ftol, gtol, jac):
+        # print('grad check', check_grad(self.dummy_func_val, self.dummy_grad_val, betas, X, y, weights, avail))
         optimizat_res = minimize(self._loglik_and_gradient,
-                       betas,
-                       args=(X, y, weights, avail),
-                       jac=True,
-                       method=self.method,
-                       tol=ftol,
-                       options={
-                           'gtol': gtol,
-                           'maxiter': maxiter
-                           }
-                       )
+                                 betas,
+                                 args=(X, y, weights, avail),
+                                 jac=True,
+                                 method=self.method,
+                                 tol=ftol,
+                                 options={
+                                    'gtol': gtol,
+                                    'maxiter': maxiter,
+                                    }
+                                 )
         return optimizat_res
 
     def _bfgs_optimization(self, betas, X, y, weights, avail, maxiter):

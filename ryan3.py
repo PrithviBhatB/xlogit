@@ -9,14 +9,14 @@ X = df[varnames].values
 y = df['choice'].values
 
 model = MixedLogit()
-initial_coeffs = [0.5, 0.5, 0.5, -0.1, 0.5, 1, 1, 1]
+# initial_coeffs = [0.5, 0.5, 0.5, -0.1, 0.5, 1, 1, 1]
 model.fit(X, y, varnames=varnames,
           # isvars=['income'],
           alts=['beach', 'boat', 'charter', 'pier'],
           randvars={'price': 'n'},
           transvars=['price', 'catch'],
-          tol=1e-3,
         #   verbose=0,
+        
           n_draws=600,
           maxiter=2000,
           # grad=False,

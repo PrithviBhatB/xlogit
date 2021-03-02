@@ -31,7 +31,7 @@ model.fit(X, y,
         #   grad=False,
         #   hess=False,
           halton=False,
-          tol=1e-4,
+          # tol=1e-4,
         #   method='L-BFGS-B',
           n_draws=400)
 model.summary()

@@ -13,8 +13,8 @@ X = df[varnames].values
 
 # isvarnames = []
 
-randvars = {'wk': 'ln', 'seas': 'u', 'tod': 'n'}
-corvars = ['wk', 'seas']
+randvars = {'wk': 'u', 'seas': 'n', 'tod': 'n'}
+corvars = ['tod', 'seas']
 alts = [1, 2, 3, 4]
 np.random.seed(123)
 model = MixedLogit()
@@ -43,6 +43,6 @@ model.fit(X, y,
         #   maxiter=2000,
         #   random_state=None,
           verbose=1,
-          n_draws=100
+          n_draws=200
 )
 model.summary()
