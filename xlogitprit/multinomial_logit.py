@@ -187,7 +187,7 @@ class MultinomialLogit(ChoiceModel):
             lambdas = betas[int(self.numFixedCoeffs+(self.numTransformedCoeffs/2)):]
             # applying transformations
             Xtrans_lmda = self.transFunc(X_trans, lambdas)
-            XB_trans = Xtrans_lambda.dot(B_transvars)
+            XB_trans = Xtrans_lmda.dot(B_transvars)
             XB += XB_trans
         # XB[np.isnan(XB)] = 1e-30
         XB[XB > 700] = 700  # avoiding infs
@@ -269,6 +269,7 @@ class MultinomialLogit(ChoiceModel):
 
         grad = np.sum(grad, axis=0, dtype=np.float64)
         result = (-loglik)
+        # print('norm', np.linalg.norm(grad, ord=np.inf))
 
         if self.grad:
             result = (-loglik, -grad)
