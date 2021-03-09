@@ -1,4 +1,4 @@
-from xlogitprit import MultinomialLogit
+from xlogitprit import MixedLogit
 import numpy as np
 import pandas as pd
 data_file = "https://raw.githubusercontent.com/arteagac/xlogit/master/examples/data/fishing_long.csv"
@@ -9,7 +9,7 @@ X = df[varnames].values
 y = df['choice'].values
 transvars = ['catch']
 
-model = MultinomialLogit()
+model = MixedLogit()
 model.fit(
   X,
   y,
@@ -19,6 +19,7 @@ model.fit(
   alts=['beach', 'boat', 'charter', 'pier'],
   # scipy_optimisation=True,
   isvars=['income', 'price'],
+  randvars={'catch': 'n'},
   weights=np.ones(1182),
   # init_coeff=np.repeat(0, 11),
   # gtol=1e-4,

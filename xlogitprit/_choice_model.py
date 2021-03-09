@@ -175,11 +175,11 @@ class ChoiceModel(ABC):
             self.fxtransidx = np.insert(np.array(self.fxtransidx, dtype="bool_"),
                                         0, np.repeat(False, len(self.isvars)*(J - 1)))
             if hasattr(self, 'rvidx'):
-                self.rvidx = np.insert(np.array(self.rvidx, dtype="bool_"), ispos,
-                                       np.repeat(False, (J - 1)))
+                self.rvidx = np.insert(np.array(self.rvidx, dtype="bool_"), 0,
+                                       np.repeat(False, len(self.isvars)*(J - 1)))
             if hasattr(self, 'rvtransidx'):
                 self.rvtransidx = np.insert(np.array(self.rvtransidx, dtype="bool_"),
-                                            0, np.repeat(False, (J - 1)))
+                                            0, np.repeat(False, len(self.isvars)*(J - 1)))
         
 
         if self.fit_intercept:
