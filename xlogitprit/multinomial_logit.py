@@ -109,12 +109,16 @@ class MultinomialLogit(ChoiceModel):
                 if isvars is not None:
                     if var in isvars:
                         continue
-            if var in transvars:
-                self.fxidx.append(False)
-                self.fxtransidx.append(True)
-            else:
-                self.fxtransidx.append(False)
-                self.fxidx.append(True)
+            with warnings.catch_warnings():
+                # CURRENTLY IGNORING FUTURE WARNING
+                # CURRENT PY: 3.8.3, numpy: 1.18.5
+                warnings.simplefilter(action='ignore', category=FutureWarning)
+                if var in transvars:
+                    self.fxidx.append(False)
+                    self.fxtransidx.append(True)
+                else:
+                    self.fxtransidx.append(False)
+                    self.fxidx.append(True)
 
         X, y, panels = self._arrange_long_format(X, y, ids, alts)
         self.y = y
