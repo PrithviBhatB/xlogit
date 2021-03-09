@@ -226,7 +226,7 @@ class MultinomialLogit(ChoiceModel):
         lik[lik == 0] = min_comp_val
         loglik = np.log(lik)
         if weights is not None:
-            loglik = loglik*weights
+            loglik = loglik * weights
         loglik = np.sum(loglik, dtype="float64")
 
         # Individual contribution to the gradient
@@ -285,7 +285,6 @@ class MultinomialLogit(ChoiceModel):
 
     def _scipy_bfgs_optimization(self, betas, X, y, weights, avail, maxiter,
                                  ftol, gtol, jac):
-        # print('grad check', check_grad(self.dummy_func_val, self.dummy_grad_val, betas, X, y, weights, avail))
         optimizat_res = minimize(self._loglik_and_gradient,
                                  betas,
                                  args=(X, y, weights, avail),

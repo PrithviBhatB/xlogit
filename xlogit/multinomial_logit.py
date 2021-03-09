@@ -158,7 +158,6 @@ class MultinomialLogit(ChoiceModel):
         # Log likelihood
         lik = np.sum(y*p, axis=1)
         loglik = np.log(lik)
-        print('loglik', loglik.shape)
         if weights is not None:
             loglik = loglik*weights
         loglik = np.sum(loglik)
@@ -170,7 +169,7 @@ class MultinomialLogit(ChoiceModel):
         H = np.dot(grad.T, grad)
         Hinv = np.linalg.inv(H)
         grad = np.sum(grad, axis=0)
-        print('norm', np.linalg.norm(grad))
+        # print('norm', np.linalg.norm(grad))
 
         return -loglik, -grad, Hinv
 

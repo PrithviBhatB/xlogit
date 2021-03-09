@@ -51,6 +51,7 @@ model.fit(X=df[varnames],
           alts=df['alt'],
           ids=df['custom_id'],
           avail=df['av'],
+          # randvars={'cost': 'n'},
           # transvars=['luggage_car']
         #   init_coeff=np.random.normal(0, 1, 9)
         #   scipy_optimisation=False

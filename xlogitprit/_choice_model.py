@@ -171,9 +171,9 @@ class ChoiceModel(ABC):
         # adjust index array to include isvars
         if len(self.isvars) > 0:
             self.fxidx = np.insert(np.array(self.fxidx, dtype="bool_"), 0,
-                                   np.repeat(True, (J - 1)))
+                                   np.repeat(True, len(self.isvars)*(J - 1)))
             self.fxtransidx = np.insert(np.array(self.fxtransidx, dtype="bool_"),
-                                        ispos, np.repeat(False, (J - 1)))
+                                        0, np.repeat(False, len(self.isvars)*(J - 1)))
             if hasattr(self, 'rvidx'):
                 self.rvidx = np.insert(np.array(self.rvidx, dtype="bool_"), ispos,
                                        np.repeat(False, (J - 1)))

@@ -1,5 +1,12 @@
 import numpy as np
 
+# define the computation boundary values not to be exceeded
+min_exp_val = -700
+max_exp_val = 700
+
+max_comp_val = 1e+300
+min_comp_val = 1e-300
+
 
 def boxcox_transformation(X_matrix, lmdas):
     """returns boxcox transformed matrix
@@ -21,6 +28,8 @@ def boxcox_transformation(X_matrix, lmdas):
     X_matrix = X_matrix.astype("float64")
     bxcx_X = bxcx_X.astype("float64")
     for i in range(len(lmdas)):
+        if lmdas[i] > max_exp_val:  # shouldn't be more than 5 anyway
+            lmdas[i] = max_exp_val
         if lmdas[i] == 0:
             bxcx_X[:, :, i] = np.log(X_matrix[:, :, i])
         else:
@@ -48,6 +57,8 @@ def boxcox_param_deriv(X_matrix, lmdas):
     X_matrix = X_matrix.astype("float64")
     der_bxcx_X = der_bxcx_X.astype("float64")
     for i in range(len(lmdas)):
+        if lmdas[i] > max_exp_val:  # shouldn't be more than 5 anyway
+            lmdas[i] = max_exp_val
         i -= 1
         if lmdas[i] == 0:
             # derivative of log(x)
@@ -83,6 +94,8 @@ def boxcox_transformation_mixed(X_matrix, lmdas):
     bxcx_X = bxcx_X.astype("float64")
 
     for i in range(len(lmdas)):
+        if lmdas[i] > max_exp_val:  # shouldn't be more than 5 anyway
+            lmdas[i] = max_exp_val
         if lmdas[i] == 0:
             bxcx_X[:, :, :, i] = np.log(X_matrix[:, :, :, i])
         else:
@@ -109,6 +122,8 @@ def boxcox_param_deriv_mixed(X_matrix, lmdas):
     X_matrix = X_matrix.astype("float64")
     der_bxcx_X = der_bxcx_X.astype("float64")
     for i in range(len(lmdas)):
+        if lmdas[i] > max_exp_val:  # shouldn't be more than 5 anyway
+            lmdas[i] = max_exp_val
         if lmdas[i] == 0:
             der_bxcx_X[:, :, :, i] = ((np.log(X_matrix[:, :, :, i])) ** 2)/2
         else:

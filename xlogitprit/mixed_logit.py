@@ -22,6 +22,12 @@ Notations
     K : Number of variables (Kf: fixed, Kr: random)
 """
 
+# define the computation boundary values not to be exceeded
+min_exp_val = -700
+max_exp_val = 700
+
+max_comp_val = 1e+300
+min_comp_val = 1e-300
 
 
 class MixedLogit(ChoiceModel):
@@ -226,12 +232,17 @@ class MixedLogit(ChoiceModel):
                 self.rvtransidx.append(False)
                 self.rvdist.append(False)
                 self.rvtransdist.append(False)
-                if var in transvars:
-                    self.fxtransidx.append(True)
-                    self.fxidx.append(False)
-                else:
-                    self.fxtransidx.append(False)
-                    self.fxidx.append(True)
+                with warnings.catch_warnings():
+                    # CURRENTLY IGNORING FUTURE WARNING
+                    # CURRENT PY: 3.8.3, numpy: 1.18.5
+                    warnings.simplefilter(action='ignore', category=FutureWarning)
+
+                    if var in transvars:
+                        self.fxtransidx.append(True)
+                        self.fxidx.append(False)
+                    else:
+                        self.fxtransidx.append(False)
+                        self.fxidx.append(True)
 
         self.rvidx = np.array(self.rvidx)
         self.rvtransidx = np.array(self.rvtransidx)
@@ -280,7 +291,18 @@ class MixedLogit(ChoiceModel):
             weights = weights*(N/np.sum(weights))  # Normalize weights
 
         if avail is not None:
-            avail = avail.reshape(N, J)
+            if panels is not None:
+                # copied logic from _balance_panels function
+                _, p_obs = np.unique(panels, return_counts=True)
+                p_obs = (p_obs/J).astype(int)
+                avail_temp = np.zeros((N, P, J))
+                cum_p = 0
+                for n, p in enumerate(p_obs):
+                    avail_temp[n, 0:p, :] = avail[cum_p:cum_p+(p*J)].reshape((1, p, J))
+                    cum_p += p
+                avail = avail_temp.reshape(N, P, J)
+            else:
+                avail = avail.reshape(N, J)
 
         # Generate draws
         draws, drawstrans = self._generate_draws(self.N, R, halton)  # (N,Kr,R)
@@ -492,7 +514,10 @@ class MixedLogit(ChoiceModel):
         # Exponent of the utility function for the logit formula
         eV = dev.np.exp(V)
         if avail is not None:
-            eV = eV*avail[:, None, :, None]  # Acommodate availablity of alts.
+            if self.panels is not None:
+                eV = eV*avail[:, :, :, None]  # Acommodate availablity of alts with panels
+            else:
+                eV = eV*avail[:, None, :, None]  # Acommodate availablity of alts.
 
         # Thresholds to avoid overflow warnings
         eV[np.isposinf(eV)] = 1e+30
