@@ -107,8 +107,8 @@ def boxcox_transformation_mixed(X_matrix, lmdas):
         if lmdas[i] == 0:
             bxcx_X[:, :, :, i] = np.log(X_matrix[:, :, :, i])
         else:
-            bxcx_X[:, :, :, i] = np.nan_to_num(np.power(X_matrix[:, :, :, i], lmdas[i])-1) / \
-                    lmdas[i]
+            bxcx_X[:, :, :, i] = np.nan_to_num((np.power(X_matrix[:, :, :, i], lmdas[i])-1) /
+                    lmdas[i])
     return bxcx_X
 
 
@@ -125,7 +125,7 @@ def boxcox_param_deriv_mixed(X_matrix, lmdas):
         der_bxcx_X: array-like
             estimated derivate of boxcox transformed matrix
     """
-    X_matrix[X_matrix == 0] = 1e-20  # avoids errors causes by log(0)
+    X_matrix[X_matrix == 0] = 1e-100  # avoids errors causes by log(0)
     der_bxcx_X = np.zeros_like(X_matrix)
     X_matrix = X_matrix.astype("float64")
     der_bxcx_X = der_bxcx_X.astype("float64")
@@ -133,8 +133,8 @@ def boxcox_param_deriv_mixed(X_matrix, lmdas):
         # if lmdas[i] > max_exp_val:  # shouldn't be more than 5 anyway
         #     lmdas[i] = max_exp_val
 
-        if lmdas[i] < -30:
-            lmdas[i] = -30
+        # if lmdas[i] < -30:
+        #     lmdas[i] = -30
 
         if lmdas[i] == 0:
             der_bxcx_X[:, :, :, i] = ((np.log(X_matrix[:, :, :, i])) ** 2)/2

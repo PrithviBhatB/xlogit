@@ -289,6 +289,18 @@ class MixedLogit(ChoiceModel):
 
         if weights is not None:
             weights = weights*(N/np.sum(weights))  # Normalize weights
+            if panels is not None:
+                # copied logic from _balance_panels function
+                _, p_obs = np.unique(panels, return_counts=True)
+                p_obs = (p_obs/J).astype(int)
+                weights_temp = np.zeros((N, P, J))
+                cum_p = 0
+                for n, p in enumerate(p_obs):
+                    weights_temp[n, 0:p, :] = weights[cum_p:cum_p+(p*J)].reshape((1, p, J))
+                    cum_p += p
+                weights = weights_temp.reshape(N, P, J)
+            else:
+                weights = weights.reshape(N, J)
 
         if avail is not None:
             if panels is not None:
@@ -486,8 +498,8 @@ class MixedLogit(ChoiceModel):
         #  transformations for variables with fixed coeffs
         if self.Kftrans != 0:
             Xftrans_lmda = self.transFunc(Xftrans, flmbda)
-            Xftrans_lmda[np.isneginf(Xftrans_lmda)] = -1e+30
-            Xftrans_lmda[np.isposinf(Xftrans_lmda)] = 1e+30
+            Xftrans_lmda[np.isneginf(Xftrans_lmda)] = -1e+300
+            Xftrans_lmda[np.isposinf(Xftrans_lmda)] = 1e+300
             # Estimating the linear utility specificiation (U = sum XB)
             Xbf_trans = np.einsum('npjk,k -> npj', Xftrans_lmda, Bftrans, dtype=np.float64)
             # combining utilities
@@ -536,7 +548,10 @@ class MixedLogit(ChoiceModel):
         lik = pch.mean(axis=1, dtype=np.float64)  # (N,)
         loglik = dev.np.log(lik)
         if weights is not None:
-            loglik = loglik*weights
+            if weights.ndim == 2:
+                loglik = loglik*weights[:, 0]
+            if weights.ndim == 3:
+                loglik = loglik*weights[:, 0, 0]
         loglik = loglik.sum()
         # Gradient estimation
         # Observed probability minus predicted probability
@@ -585,13 +600,15 @@ class MixedLogit(ChoiceModel):
                 gftrans = np.einsum('npjr, npjk -> nkr', ymp, Xftrans_lmda, dtype=np.float64) # (N, Kf, R)
                 # for the lambda param
                 der_Xftrans_lmda = self.transform_deriv(Xftrans, flmbda)
-                der_Xftrans_lmda[np.isposinf(der_Xftrans_lmda)] = 1e+30
-                der_Xftrans_lmda[np.isneginf(der_Xftrans_lmda)] = -1e+30
-                der_Xftrans_lmda[np.isnan(der_Xftrans_lmda)] = 1e-30 # TODO 
+                der_Xftrans_lmda[np.isposinf(der_Xftrans_lmda)] = 1e+300
+                der_Xftrans_lmda[np.isneginf(der_Xftrans_lmda)] = -1e+300
+                der_Xftrans_lmda[np.isnan(der_Xftrans_lmda)] = 1e-300 # TODO 
                 der_Xbftrans = np.einsum('npjk,k -> npk', der_Xftrans_lmda, Bftrans, dtype=np.float64)
                 gftrans_lmda = np.einsum('npjr,npk -> nkr', ymp, der_Xbftrans, dtype=np.float64) # (N, Kfbc, R)
+                print('gftrans_lmda1', gftrans_lmda)
                 gftrans = (gftrans*pch[:, None, :]).mean(axis=2, dtype=np.float64)/lik[:, None]
                 gftrans_lmda = (gftrans_lmda*pch[:, None, :]).mean(axis=2, dtype=np.float64)/lik[:, None]
+                print('gftrans_lmda2', gftrans_lmda)
                 # gftrans_lmda = gftrans_lmda * 1e+15
                 g = np.concatenate((g, gftrans, gftrans_lmda), axis = 1) if g.size \
                     else np.concatenate((gftrans, gftrans_lmda), axis=1)
@@ -641,7 +658,10 @@ class MixedLogit(ChoiceModel):
 
         # updated gradient
         if weights is not None:
-            g = g*weights[:, None]
+            if weights.ndim == 2:
+                g = np.transpose(np.transpose(g)*weights[:, 0])
+            if weights.ndim == 3:
+                g = np.transpose(np.transpose(g)*weights[:, 0, 0])
         g = np.sum(g, axis=0, dtype=np.float64)  # (K, )
         if dev.using_gpu:
             g, loglik = dev.to_cpu(g), dev.to_cpu(loglik)

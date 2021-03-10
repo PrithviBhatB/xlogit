@@ -152,6 +152,9 @@ class MultinomialLogit(ChoiceModel):
 
         X, Xnames = self._setup_design_matrix(X)
 
+        if weights is not None:
+            weights = weights.reshape(X.shape[0], X.shape[1])
+
         if avail is not None:
             avail = avail.reshape(X.shape[0], X.shape[1])
 
@@ -230,7 +233,7 @@ class MultinomialLogit(ChoiceModel):
         lik[lik == 0] = min_comp_val
         loglik = np.log(lik)
         if weights is not None:
-            loglik = loglik * weights
+            loglik = loglik * weights[:, 0]  # doesn't matter which col.
         loglik = np.sum(loglik, dtype="float64")
 
         # Individual contribution to the gradient
@@ -256,20 +259,22 @@ class MultinomialLogit(ChoiceModel):
             der_Xtrans_lmda = self.transform_deriv(X_trans, lambdas)
             der_XBtrans = np.einsum('njk,k -> njk', der_Xtrans_lmda, B_trans, dtype=np.float64)
             gtrans_lmda = np.einsum('nj,njk -> nk', ymp, der_XBtrans, dtype=np.float64)
+            print('gtrans_lmda', gtrans_lmda)
             grad = np.concatenate((grad, gtrans, gtrans_lmda), axis=1) \
                 if grad.size \
                 else np.concatenate((gtrans, gtrans_lmda), axis=1)  # (N, K)
         if weights is not None:
-            grad = grad*weights[:, None]
+            #  all columns of weights same so only first used
+            grad = np.transpose(np.transpose(grad)*weights[:, 0])
 
-        if self.hess:
-            H = np.dot(grad.T, grad)
-            H[H == 0] = 1e-30
-            H[np.isnan(H)] = 1e-30  # TODO: why nans!
-            H[H > 1e+30] = 1e+30
-            H[H < -1e+30] = -1e+30
-            Hinv = np.linalg.pinv(H)
-            self.Hinv = Hinv
+        # if self.hess:
+        #     H = np.dot(grad.T, grad)
+        #     H[H == 0] = 1e-30
+        #     H[np.isnan(H)] = 1e-30  # TODO: why nans!
+        #     H[H > 1e+30] = 1e+30
+        #     H[H < -1e+30] = -1e+30
+        #     Hinv = np.linalg.pinv(H)
+        #     self.Hinv = Hinv
 
         grad = np.sum(grad, axis=0, dtype=np.float64)
         result = (-loglik)

@@ -20,7 +20,7 @@ model.fit(
   # scipy_optimisation=True,
   isvars=['income', 'price'],
   randvars={'catch': 'n'},
-  weights=np.ones(1182),
+  weights=np.ones(4782),
   # init_coeff=np.repeat(0, 11),
   # gtol=1e-4,
   # grad=False,

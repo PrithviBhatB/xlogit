@@ -21,9 +21,10 @@ model.fit(X, y, varnames=varnames,
           maxiter=2000,
           # grad=False,
           # hess=False,
-          halton=False,
+          halton=True,
           # init_coeff=np.repeat(0.2, 5),
           correlation=True,
+          weights=np.ones(1182),
           # method="L-BFGS-B",
         #   fit_intercept=True
           )
