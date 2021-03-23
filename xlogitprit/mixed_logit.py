@@ -161,17 +161,22 @@ class MixedLogit(ChoiceModel):
             Verbosity of messages to show during estimation. 0: No messages,
             1: Some messages, 2: All messages
 
-        ftol : # TODO
+        ftol : int, float, default=1e-5
+            Sets the tol parameter in scipy.optimize.minimize - Tolerance for 
+            termination.
 
-        gtol: 
+        gtol: int, float, default=1e-5
+            Sets the gtol parameter in scipy.optimize.minimize(method="bfgs) -
+            Gradient norm must be less than gtol before successful termination.
 
-        hess :
+        grad : bool, default=True
+            Calculate and return the gradient in _loglik_and_gradient
 
-        grad : 
+        hess : bool, default=True
+            Calculate and return the gradient in _loglik_and_gradient
 
         method: string, default="bfgs"
             specify optimisation method
-
 
         Returns
         -------
@@ -187,19 +192,18 @@ class MixedLogit(ChoiceModel):
         self._pre_fit(alts, varnames, isvars, transvars, base_alt,
                       fit_intercept, transformation, maxiter, panels,
                       correlation, randvars)
-        self.randvarsdict = randvars
-        #  random variables not transformed
+        self.randvarsdict = randvars  #  random variables not transformed
         with warnings.catch_warnings():
-            # CURRENTLY IGNORING FUTURE WARNING
+            # CURRENTLY IGNORING FUTURE WARNING -> use in w/ np.array
             # CURRENT PY: 3.8.3, numpy: 1.18.5
             warnings.simplefilter(action='ignore', category=FutureWarning)
 
             self.randvars = [x for x in self.randvars if x not in transvars]
             #  random variables that are transformed
             self.randtransvars = [x for x in transvars if (x in randvars) and
-                                                            (x not in self.randvars)]
+                                                          (x not in self.randvars)]
             self.fixedtransvars = [x for x in transvars if x not in
-                                    self.randtransvars]
+                                   self.randtransvars]
         self.n_draws = n_draws
         # divide the variables in varnames into fixed, fixed transformed,
         # random, random transformed by getting 4 index arrays
@@ -287,6 +291,7 @@ class MixedLogit(ChoiceModel):
 
         self.total_fun_eval = 0
 
+        #  reshape weights (using panel data if necessary)
         if weights is not None:
             weights = weights*(N/np.sum(weights))  # Normalize weights
             if panels is not None:
@@ -367,8 +372,6 @@ class MixedLogit(ChoiceModel):
                 for bound in bound_dict.items() if bound[1][1] > 0]
         # convert into appropriate format for L-BFGS-B
         bnds = [tuple(itertools.chain.from_iterable(bnds))][0]
-        # tol = 1e-1
-        # optimizat_res = None
 
         # if tol is None:
         #     tol = np.finfo(np.float64).eps ** 0.3333
@@ -380,17 +383,13 @@ class MixedLogit(ChoiceModel):
                 jac=jac,
                 method=method,
                 args=(X, y, panel_info, draws, drawstrans, weights,
-                        avail),
+                      avail),
                 tol=ftol,
-                bounds=bnds if method=="L-BFGS-B" else None,
+                bounds=bnds if method == "L-BFGS-B" else None,
                 options={
-                    # 'ftol': tol,
                     'gtol': gtol,
                     'maxiter': maxiter,
                     'disp': verbose > 0,
-                    # 'maxcor': 100,
-                    # 'maxls': 100,
-                    # 'maxfun': 1000
                 }
             )
 
@@ -413,7 +412,7 @@ class MixedLogit(ChoiceModel):
         if (len(Br) > 1):
             XBr = dev.np.einsum('npjk,nkr -> npjr', Xr, Br, dtype=np.float64)  # (N,P,J,R)
             V += XBr  # (N,P,J,R)
-        V[V > 700] = 700
+        V[V > max_exp_val] = max_exp_val
         eV = dev.np.exp(V)
         if avail is not None:
             eV = eV*avail[:, None, :, None]  # Acommodate availablity of alts.
@@ -443,6 +442,7 @@ class MixedLogit(ChoiceModel):
         beta_segment_names = ["Bf", "Br_b", "chol", "Br_w", "Bftrans",
                               "flmbda", "Brtrans_b", "Brtrans_w", "rlmda"]
         var_list = dict()
+        # number of parameters for each corresponding segment
         iterations = [self.Kf, self.Kr, self.Kchol, self.Kbw, self.Kftrans,
                       self.Kftrans, self.Krtrans, self.Krtrans, self.Krtrans]
         i = 0
@@ -498,8 +498,8 @@ class MixedLogit(ChoiceModel):
         #  transformations for variables with fixed coeffs
         if self.Kftrans != 0:
             Xftrans_lmda = self.transFunc(Xftrans, flmbda)
-            Xftrans_lmda[np.isneginf(Xftrans_lmda)] = -1e+300
-            Xftrans_lmda[np.isposinf(Xftrans_lmda)] = 1e+300
+            Xftrans_lmda[np.isneginf(Xftrans_lmda)] = -max_comp_val
+            Xftrans_lmda[np.isposinf(Xftrans_lmda)] = max_comp_val
             # Estimating the linear utility specificiation (U = sum XB)
             Xbf_trans = np.einsum('npjk,k -> npj', Xftrans_lmda, Bftrans, dtype=np.float64)
             # combining utilities
@@ -522,7 +522,7 @@ class MixedLogit(ChoiceModel):
             V += Xbr_trans  # (N, P, J, R)
 
         #  Combine utilities of fixed and random variables
-        V[V > 700] = 700
+        V[V > max_exp_val] = max_exp_val
         # Exponent of the utility function for the logit formula
         eV = dev.np.exp(V)
         if avail is not None:
@@ -532,8 +532,8 @@ class MixedLogit(ChoiceModel):
                 eV = eV*avail[:, None, :, None]  # Acommodate availablity of alts.
 
         # Thresholds to avoid overflow warnings
-        eV[np.isposinf(eV)] = 1e+30
-        eV[np.isneginf(eV)] = -1e+30
+        eV[np.isposinf(eV)] = max_comp_val
+        eV[np.isneginf(eV)] = -max_exp_val
         sum_eV = np.sum(eV, axis=2, keepdims=True, dtype=np.float64)
         p = np.divide(eV, sum_eV, out=np.zeros_like(eV), where=(sum_eV != 0), dtype=np.float64)
         # temp_p = np.mean(np.mean(np.mean(p, axis=0), axis=0), axis=1)
@@ -543,14 +543,14 @@ class MixedLogit(ChoiceModel):
         pch = np.sum(y*p, axis=2, dtype=np.float64) # (N, P, R)
         pch = self._prob_product_across_panels(pch, panel_info)
         # Thresholds to avoid divide by zero warnings
-        pch[pch == 0] = 1e-300
+        pch[pch == 0] = min_comp_val
         # Log-likelihood
         lik = pch.mean(axis=1, dtype=np.float64)  # (N,)
         loglik = dev.np.log(lik)
         if weights is not None:
             if weights.ndim == 2:
                 loglik = loglik*weights[:, 0]
-            if weights.ndim == 3:
+            if weights.ndim == 3:  # (panel = True)
                 loglik = loglik*weights[:, 0, 0]
         loglik = loglik.sum()
         # Gradient estimation
@@ -586,7 +586,7 @@ class MixedLogit(ChoiceModel):
             draws_tril_idx = np.array(np.concatenate((draws_tril_idx, range_var)))
             X_tril_idx = np.array(np.concatenate((X_tril_idx, range_var)))
             draws_tril_idx = draws_tril_idx.astype(int)
-            X_tril_idx = X_tril_idx.astype(int)  # TODO: Check
+            X_tril_idx = X_tril_idx.astype(int)
             gr_w = gr_b[:, X_tril_idx, :]*draws[:, draws_tril_idx, :]  # (N,P,Kr,R)
             gr_b = (gr_b*pch[:, None, :]).mean(axis=2, dtype=np.float64)/lik[:, None]  # (N,Kr)
             gr_w = (gr_w*pch[:, None, :]).mean(axis=2, dtype=np.float64)/lik[:, None]  # (N,Kr)
@@ -600,26 +600,24 @@ class MixedLogit(ChoiceModel):
                 gftrans = np.einsum('npjr, npjk -> nkr', ymp, Xftrans_lmda, dtype=np.float64) # (N, Kf, R)
                 # for the lambda param
                 der_Xftrans_lmda = self.transform_deriv(Xftrans, flmbda)
-                der_Xftrans_lmda[np.isposinf(der_Xftrans_lmda)] = 1e+300
-                der_Xftrans_lmda[np.isneginf(der_Xftrans_lmda)] = -1e+300
-                der_Xftrans_lmda[np.isnan(der_Xftrans_lmda)] = 1e-300 # TODO 
-                der_Xbftrans = np.einsum('npjk,k -> npk', der_Xftrans_lmda, Bftrans, dtype=np.float64)
-                gftrans_lmda = np.einsum('npjr,npk -> nkr', ymp, der_Xbftrans, dtype=np.float64) # (N, Kfbc, R)
-                print('gftrans_lmda1', gftrans_lmda)
+                der_Xftrans_lmda[np.isposinf(der_Xftrans_lmda)] = max_comp_val
+                der_Xftrans_lmda[np.isneginf(der_Xftrans_lmda)] = -max_comp_val
+                der_Xftrans_lmda[np.isnan(der_Xftrans_lmda)] = min_comp_val
+                der_Xbftrans = np.einsum('npjk,k -> njk', der_Xftrans_lmda, Bftrans, dtype=np.float64)
+                #  TODO - confirm reshape ymp for fixed param lambda estimates (N, P, J, R) -> (N, J)
+                temp_ymp = ymp.mean(axis=3).reshape((self.N, self.P, self.J))
+                gftrans_lmda = np.einsum('npj,njk -> nk', temp_ymp, der_Xbftrans, dtype=np.float64) # (N, Kfbc)
                 gftrans = (gftrans*pch[:, None, :]).mean(axis=2, dtype=np.float64)/lik[:, None]
-                gftrans_lmda = (gftrans_lmda*pch[:, None, :]).mean(axis=2, dtype=np.float64)/lik[:, None]
-                print('gftrans_lmda2', gftrans_lmda)
-                # gftrans_lmda = gftrans_lmda * 1e+15
-                g = np.concatenate((g, gftrans, gftrans_lmda), axis = 1) if g.size \
+                # gftrans_lmda = (gftrans_lmda*pch[:, None, :]).mean(axis=2, dtype=np.float64)/lik[:, None]
+                g = np.concatenate((g, gftrans, gftrans_lmda), axis=1) if g.size \
                     else np.concatenate((gftrans, gftrans_lmda), axis=1)
+
             if self.Krtrans:
-                # for rand params
+                # for rand parameters
                 # for mean: (obs prob. min pred. prob)*obs var * deriv rand coef
                 # if rand coef is lognormally distributed:
                 # gr_b = (obs prob minus pred. prob) * obs. var * rand draw * der(RV)
-                #  TODO: Check
                 temp_chol = chol_mat if chol_mat.size != 0 else np.diag(Brtrans_w)
-                # TODO: CHECK if rvtransdist goes through correctly
                 dertrans = self._compute_derivatives(betas, draws=drawstrans, dist=self.rvtransdist, chol_mat=temp_chol, K=self.Krtrans, trans=True)
                 grtrans_b = np.einsum('npjr, npjk -> nkr', ymp, Xrtrans_lmda, dtype=np.float64)*dertrans
                 # for s.d. (obs - pred) * obs var * der rand coef * rand draw
@@ -627,10 +625,11 @@ class MixedLogit(ChoiceModel):
                 # for the lambda param
                 # gradient = (obs - pred) * deriv x_lambda * beta
                 der_Xrtrans_lmda = self.transform_deriv(Xrtrans, rlmda)
-                der_Xrtrans_lmda[np.isposinf(der_Xrtrans_lmda)] = 1e+30
-                der_Xrtrans_lmda[np.isnan(der_Xrtrans_lmda)] = 1e-30 # TODO 
-                der_Xbrtrans = np.einsum('npjk, nkr -> npjkr', der_Xrtrans_lmda, Brtrans, dtype=np.float64) # (N, P, J, K, R)
-                grtrans_lmda = np.einsum('npjr, npjkr -> nkr', ymp, der_Xbrtrans, dtype=np.float64) # (N, Krtrans, R)
+                der_Xrtrans_lmda[np.isposinf(der_Xrtrans_lmda)] = max_comp_val
+                der_Xrtrans_lmda[np.isnan(der_Xrtrans_lmda)] = min_comp_val
+                der_Xbrtrans = np.einsum('npjk, nkr -> npjkr', der_Xrtrans_lmda,
+                                         Brtrans, dtype=np.float64)  # (N, P, J, K, R)
+                grtrans_lmda = np.einsum('npjr, npjkr -> nkr', ymp, der_Xbrtrans, dtype=np.float64)  # (N, Krtrans, R)
                 grtrans_b = (grtrans_b*pch[:, None, :]).mean(axis=2, dtype=np.float64)/lik[:, None]  # (N,Kr)
                 grtrans_w = (grtrans_w*pch[:, None, :]).mean(axis=2, dtype=np.float64)/lik[:, None]  # (N,Kr)
                 grtrans_lmda = (grtrans_lmda*pch[:, None, :]).mean(axis=2, dtype=np.float64)/lik[:, None]  # (N,Kr)
@@ -660,14 +659,14 @@ class MixedLogit(ChoiceModel):
         if weights is not None:
             if weights.ndim == 2:
                 g = np.transpose(np.transpose(g)*weights[:, 0])
-            if weights.ndim == 3:
+            if weights.ndim == 3:  # (3 dim for panel data)
                 g = np.transpose(np.transpose(g)*weights[:, 0, 0])
         g = np.sum(g, axis=0, dtype=np.float64)  # (K, )
         if dev.using_gpu:
             g, loglik = dev.to_cpu(g), dev.to_cpu(loglik)
 
         # log-lik
-        # print('norm', np.linalg.norm(g, ord=np.inf))
+        # print('norm', np.linalg.norm(g, ord=np.inf)) #  useful debugging gtol
 
         result = (-loglik)
         if self.grad:
@@ -679,11 +678,6 @@ class MixedLogit(ChoiceModel):
 
         return result
 
-    def _concat_gradients(self, gr_f, gr_b, gr_w):
-        idx = np.append(np.where(~self.rvidx)[0], np.where(self.rvidx)[0])
-        gr_fb = np.concatenate((gr_f, gr_b), axis=1)[:, idx]
-        return np.concatenate((gr_fb, gr_w), axis=1)
-
     def _prob_product_across_panels(self, pch, panel_info):
         if not np.all(panel_info):  # If panels unbalanced. Not all ones
             idx = panel_info == 0
@@ -694,6 +688,7 @@ class MixedLogit(ChoiceModel):
         return pch  # (N,R)
 
     def _apply_distribution(self, betas_random, index=None, draws=None):
+        """Apply the mixing distribution to the random betas."""
         index = index if (index is not None) else self.rvdist
         for k, dist in enumerate(index):
             if dist == 'ln':
@@ -731,8 +726,9 @@ class MixedLogit(ChoiceModel):
             panel_info = np.ones((N, P))
         return Xbal, ybal, panel_info
 
-    def _compute_derivatives(self, betas, draws, dist=None, K=None, 
+    def _compute_derivatives(self, betas, draws, dist=None, K=None,
                              chol_mat=None, trans=False):
+        """Compute the derivatives based on the mixing distributions."""
         N, R = draws.shape[0], draws.shape[2]
         Kr = K if K else self.Kr
 
@@ -766,7 +762,7 @@ class MixedLogit(ChoiceModel):
             # Extract coeffiecients from betas array
             # Kf = self.Kf # Number of fixed coeff
             betas_fixed = betas[0:self.Kf]  # First Kf positions
-            br_mean = betas[self.Kf:self.Kf+self.Kr]  # TODO: this is for fixed tho?
+            br_mean = betas[self.Kf:self.Kf+self.Kr]
 
             # Compute: betas = mean + sd*draws
             # TODO: Consider randtrans?
@@ -777,6 +773,7 @@ class MixedLogit(ChoiceModel):
         return betas_fixed, betas_random
 
     def _generate_draws(self, sample_size, n_draws, halton=True):
+        """Generate draws based on the given mixing distributions."""
         draws = drawstrans = []
         if halton:
             if self.randvars:
@@ -789,7 +786,7 @@ class MixedLogit(ChoiceModel):
             if self.randvars:
                 draws = self._get_random_draws(sample_size, n_draws,
                                                np.sum(self.rvidx))
-            if self.randtransvars:          
+            if self.randtransvars:
                 drawstrans = self._get_random_draws(sample_size, n_draws,
                                                     np.sum(self.rvtransidx))
         # remove False to allow better enumeration
@@ -817,9 +814,11 @@ class MixedLogit(ChoiceModel):
         return draws, drawstrans  # (N,Kr,R)
 
     def _get_random_draws(self, sample_size, n_draws, n_vars):
+        """Generate random uniform draws between 0 and 1."""
         return np.random.uniform(size=(sample_size, n_vars, n_draws))
 
     def _get_halton_draws(self, sample_size, n_draws, n_vars, shuffled=False):
+        """Generate halton draws between 0 and 1."""
         primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47,
                   53, 59, 61, 71, 73, 79, 83, 89, 97, 101, 103, 107,
                   109, 113, 127, 131, 137, 139, 149, 151, 157, 163, 167,
