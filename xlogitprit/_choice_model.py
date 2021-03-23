@@ -90,7 +90,7 @@ class ChoiceModel(ABC):
                            (v not in self.transvars) and
                            (v not in self.randvars))]
             
-            self.asvars_construct_matrix = [v for v in varnames
+            self.asvars_construct_matrix = [v for v in varnames  # old definition of asvars used to make datasets
                                             if ((v not in self.isvars))]
         self.randtransvars = [] if transvars is None else []
         self.fixedtransvars = [] if transvars is None else []
@@ -169,7 +169,6 @@ class ChoiceModel(ABC):
         self.varnames = np.array(varnames)
         ispos = [self.varnames.tolist().index(i) for i in self.isvars]  # Position of IS vars
 
-
         # adjust index array to include isvars
         if len(self.isvars) > 0:
             self.fxidx = np.insert(np.array(self.fxidx, dtype="bool_"), 0,
@@ -213,10 +212,11 @@ class ChoiceModel(ABC):
         # if correlation = True correlation pos is randpos, if list get correct pos
         self.correlationpos = []
         if randvars:
-            self.correlationpos = [self.randvars.index(i) for i in randvars] # Position of correlated variables within randvars
+            self.correlationpos = [self.randvars.index(i) for i in randvars] #  Position of correlated variables within randvars
         if (isinstance(self.correlation, list)):
             self.correlationpos = [self.randvars.index(i) for i in self.correlation]
-            self.uncorrelatedpos = [self.randvars.index(i) for i in self.randvars if i not in self.correlation]
+            self.uncorrelatedpos = [self.randvars.index(i) for i in
+                                    self.randvars if i not in self.correlation]
         self.Kf = sum(self.fxidx)  # set number of fixed coeffs from idx
         self.Kr = len(randpos)  # Number of random coefficients
         self.Kftrans = len(fixedtranspos)  # Number of fixed coefficients of bc transformed vars
@@ -281,8 +281,10 @@ class ChoiceModel(ABC):
                            if j != self.base_alt] if self.fit_intercept else []
         names = ["{}.{}".format(isvar, j) for isvar in isvars
                  for j in self.alternatives if j != self.base_alt]
-        lambda_names_fixed = ["lambda.{}".format(transvar) for transvar in fixedtransvars]
-        lambda_names_rand = ["lambda.{}".format(transvar) for transvar in randtransvars]
+        lambda_names_fixed = ["lambda.{}".format(transvar) for transvar in
+                              fixedtransvars]
+        lambda_names_rand = ["lambda.{}".format(transvar) for transvar in
+                             randtransvars]
         randvars = [x for x in self.varnames if x in self.randvars]
         asvars_names = [x for x in asvars if (x not in self.randvars) and
                                              (x not in fixedtransvars) and

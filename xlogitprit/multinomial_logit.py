@@ -6,15 +6,17 @@ Implements multinomial and conditional logit models
 import numpy as np
 from ._choice_model import ChoiceModel
 from .boxcox_functions import boxcox_transformation, boxcox_param_deriv
-import scipy.stats
 # import scipy.optimize
-from scipy.optimize import minimize, check_grad
-from scipy.special import logsumexp
+from scipy.optimize import minimize
 import warnings
 
-# boundary values
+# define the computation boundary values not to be exceeded
+min_exp_val = -700
+max_exp_val = 700
+
 max_comp_val = 1e+300
 min_comp_val = 1e-300
+
 
 class MultinomialLogit(ChoiceModel):
     """Class for estimation of Multinomial and Conditional Logit Models"""
@@ -22,8 +24,8 @@ class MultinomialLogit(ChoiceModel):
     def fit(self, X, y, varnames=None, alts=None, isvars=None, transvars=None,
             transformation=None, ids=None, weights=None, avail=None,
             base_alt=None, fit_intercept=False, init_coeff=None, maxiter=2000,
-            random_state=None, ftol=1e-5, gtol=1e-5, grad=True, hess=True, verbose=1,
-            method="bfgs", scipy_optimisation=True):
+            random_state=None, ftol=1e-5, gtol=1e-5, grad=True, hess=True, 
+            verbose=1, method="bfgs", scipy_optimisation=True):
         """Fit multinomial and/or conditional logit models.
 
         Parameters
@@ -79,15 +81,26 @@ class MultinomialLogit(ChoiceModel):
             Verbosity of messages to show during estimation. 0: No messages,
             1: Some messages, 2: All messages
 
-        ftol : # TODO
+        method: string, default="bfgs"
+            specify optimisation method passed into scipy.optimize.minimize
 
-        gtol
+        ftol : int, float, default=1e-5
+            Sets the tol parameter in scipy.optimize.minimize - Tolerance for
+            termination.
 
-        grad : 
+        gtol: int, float, default=1e-5
+            Sets the gtol parameter in scipy.optimize.minimize(method="bfgs) -
+            Gradient norm must be less than gtol before successful termination.
 
-        hess :
+        grad : bool, default=True
+            Calculate and return the gradient in _loglik_and_gradient
 
-        scipy_optimisation :
+        hess : bool, default=True
+            Calculate and return the gradient in _loglik_and_gradient
+
+        scipy_optimisation : bool, default=False
+            Use scipy_optimisation for minimisation. When false uses own
+            bfgs method.
 
         Returns
         -------
@@ -158,8 +171,7 @@ class MultinomialLogit(ChoiceModel):
         if avail is not None:
             avail = avail.reshape(X.shape[0], X.shape[1])
 
-
-        # add transformation vars and corresponding lambdas
+        #  add transformation vars and corresponding lambdas
         lambda_names = ["lambda.{}".format(transvar) for transvar in transvars]
         transnames = np.concatenate((transvars, lambda_names))
         Xnames = np.concatenate((Xnames, transnames))
@@ -172,11 +184,12 @@ class MultinomialLogit(ChoiceModel):
         # Call optimization routine
         if scipy_optimisation:
             optimizat_res = self._scipy_bfgs_optimization(betas, X, y, weights,
-                                                      avail, maxiter, ftol, gtol, jac)
+                                                          avail, maxiter, ftol,
+                                                          gtol, jac)
 
         else:
             optimizat_res = self._bfgs_optimization(betas, X, y, weights,
-                                                      avail, maxiter) #, tol, jac)
+                                                    avail, maxiter)
         self._post_fit(optimizat_res, Xnames, X.shape[0], verbose)
 
     def _compute_probabilities(self, betas, X, avail):
@@ -196,11 +209,9 @@ class MultinomialLogit(ChoiceModel):
             Xtrans_lmda = self.transFunc(X_trans, lambdas)
             XB_trans = Xtrans_lmda.dot(B_transvars)
             XB += XB_trans
-        # XB[np.isnan(XB)] = 1e-30
-        XB[XB > 700] = 700  # avoiding infs
-        XB[XB < -700] = -700  # avoiding infs
-        # XB[np.isposinf(XB)] = 1e+30  # avoiding infs
-        # XB[np.isneginf(XB)] = -1e+30  # avoiding infs
+
+        XB[XB > max_exp_val] = max_exp_val  # avoiding infs
+        XB[XB < min_exp_val] = min_exp_val  # avoiding infs
 
         # def logsumexp(x):
         #     c = x.max()
@@ -238,7 +249,7 @@ class MultinomialLogit(ChoiceModel):
 
         # Individual contribution to the gradient
 
-        transpos = [self.varnames.tolist().index(i) for i in self.transvars]  # Position of trans vars
+        transpos = [self.varnames.tolist().index(i) for i in self.transvars]  #  Position of trans vars
         B_trans = betas[self.numFixedCoeffs:
                         int(self.numFixedCoeffs+(self.numTransformedCoeffs/2))]
         lambdas = betas[int(self.numFixedCoeffs+(self.numTransformedCoeffs/2)):]
@@ -259,7 +270,6 @@ class MultinomialLogit(ChoiceModel):
             der_Xtrans_lmda = self.transform_deriv(X_trans, lambdas)
             der_XBtrans = np.einsum('njk,k -> njk', der_Xtrans_lmda, B_trans, dtype=np.float64)
             gtrans_lmda = np.einsum('nj,njk -> nk', ymp, der_XBtrans, dtype=np.float64)
-            print('gtrans_lmda', gtrans_lmda)
             grad = np.concatenate((grad, gtrans, gtrans_lmda), axis=1) \
                 if grad.size \
                 else np.concatenate((gtrans, gtrans_lmda), axis=1)  # (N, K)
@@ -269,8 +279,8 @@ class MultinomialLogit(ChoiceModel):
 
         # if self.hess:
         #     H = np.dot(grad.T, grad)
-        #     H[H == 0] = 1e-30
-        #     H[np.isnan(H)] = 1e-30  # TODO: why nans!
+        #     H[H == 0] = min_comp_val
+        #     H[np.isnan(H)] = min_comp_val
         #     H[H > 1e+30] = 1e+30
         #     H[H < -1e+30] = -1e+30
         #     Hinv = np.linalg.pinv(H)
@@ -278,19 +288,11 @@ class MultinomialLogit(ChoiceModel):
 
         grad = np.sum(grad, axis=0, dtype=np.float64)
         result = (-loglik)
-        # print('norm', np.linalg.norm(grad, ord=np.inf))
+        # print('norm', np.linalg.norm(grad, ord=np.inf)) #  this is useful debug gtol
 
         if self.grad:
             result = (-loglik, -grad)
         return result
-
-    def dummy_func_val(self, betas, X, y, weights, avail):
-        f, _ = self._loglik_and_gradient(betas, X, y, weights, avail)
-        return f
-
-    def dummy_grad_val(self, betas, X, y, weights, avail):
-        _, g = self._loglik_and_gradient(betas, X, y, weights, avail)
-        return g
 
     def _scipy_bfgs_optimization(self, betas, X, y, weights, avail, maxiter,
                                  ftol, gtol, jac):
