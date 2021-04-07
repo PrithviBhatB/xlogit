@@ -12,6 +12,7 @@ from ._device import device as dev
 import numpy as np
 import itertools
 import warnings
+import numdifftools as nd
 
 """
 Notations
@@ -205,6 +206,7 @@ class MixedLogit(ChoiceModel):
             self.fixedtransvars = [x for x in transvars if x not in
                                    self.randtransvars]
         self.n_draws = n_draws
+        self.gtol = gtol
         # divide the variables in varnames into fixed, fixed transformed,
         # random, random transformed by getting 4 index arrays
         # also for random and random transformed save the distributions
@@ -286,6 +288,7 @@ class MixedLogit(ChoiceModel):
 
         self.grad = grad
         self.hess = hess
+        self.method = method
 
         jac = True if self.grad else False
 
@@ -348,14 +351,14 @@ class MixedLogit(ChoiceModel):
         positive_bound = (0, 1e+30)
         any_bound = (-1e+30, 1e+30)
         corr_bound = (-1, 1)
-        lmda_bound = (-5, 5)
+        lmda_bound = (-5, 1)
         
         # to be used with L-BFGS-B method, automatically generate bounds
         bound_dict = {
             "bf": (any_bound, self.Kf),
             "br_b": (any_bound, self.Kr),
             "chol": (any_bound, self.Kchol), # TODO: bounds w/ s.d. in chol?
-            "br_w": (any_bound, self.Kr - self.correlationLength),
+            "br_w": (positive_bound, self.Kr - self.correlationLength),
             "bf_trans": (any_bound, self.Kftrans),
             "flmbda": (lmda_bound, self.Kftrans),
             "br_trans_b": (any_bound, self.Krtrans),
@@ -392,6 +395,29 @@ class MixedLogit(ChoiceModel):
                     'disp': verbose > 0,
                 }
             )
+        if self.method == "L-BFGS-B":
+            # calculate hessian by finite differences at minimisation point            
+            def _hessian(x, func, eps=1e-8):
+                N = x.size
+                h = np.zeros((N, N))
+                df_0 = func(x)[1]
+                for i in np.arange(N):
+                    xx0 = 1 * x[i]
+                    x[i] = xx0 + eps
+                    df_1 = func(x)[1]
+                    h[i, :] = (df_1 - df_0)/eps
+                    x[i] = xx0
+                return h
+
+            def _get_loglik_gradient(betas):
+                res = self._loglik_gradient(betas,
+                X, y, panel_info, draws, drawstrans, weights,
+                      avail)
+                return res
+            
+            H = _hessian(optimizat_res['x'], _get_loglik_gradient)
+            H = np.linalg.inv(H)
+            optimizat_res['hess_inv'] = H
 
         self._post_fit(optimizat_res, Xnames, N, verbose) # TODO: IF SELF
 
@@ -436,6 +462,7 @@ class MixedLogit(ChoiceModel):
         # random beta means (Br_b)
         # for both non-transformed and transformed variables
         # and random beta cholesky factors (chol)
+        
         if dev.using_gpu:
             betas = dev.to_gpu(betas)
 
@@ -653,6 +680,7 @@ class MixedLogit(ChoiceModel):
         # Hinv = np.linalg.pinv(H)
         # self.Hinv = Hinv
 
+
         self.total_fun_eval += 1
 
         # updated gradient
@@ -666,8 +694,8 @@ class MixedLogit(ChoiceModel):
             g, loglik = dev.to_cpu(g), dev.to_cpu(loglik)
 
         # log-lik
+        self.gtol_res = np.linalg.norm(g, ord=np.inf)
         # print('norm', np.linalg.norm(g, ord=np.inf)) #  useful debugging gtol
-
         result = (-loglik)
         if self.grad:
             # if self.hess:

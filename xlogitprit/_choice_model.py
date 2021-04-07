@@ -114,6 +114,7 @@ class ChoiceModel(ABC):
         try:
             self.stderr = np.sqrt(np.diag(optimization_res['hess_inv']))
         except Exception:
+            print('in the exception')
             if hasattr(optimization_res, 'hess_inv'):
                 if (isinstance(optimization_res['hess_inv'], sc.optimize.lbfgsb.LbfgsInvHessProduct)):
                     hess = optimization_res['hess_inv'].todense()
@@ -122,8 +123,8 @@ class ChoiceModel(ABC):
                     self.stderr = np.zeros_like(self.coeff_)
             if hasattr(self, 'Hinv'):
                 self.stderr = np.sqrt(np.diag(np.array(self.Hinv)))
-
-        self.zvalues = np.nan_to_num(self.coeff_/self.stderr)
+        lambda_mask = [1 if "lambda" in x else 0 for x in coeff_names]
+        self.zvalues = np.nan_to_num((self.coeff_ - lambda_mask)/self.stderr)
         self.pvalues = 2*t.pdf(-np.abs(self.zvalues), df=sample_size)
         self.loglikelihood = -optimization_res['fun']
         self.coeff_names = coeff_names
@@ -364,6 +365,9 @@ class ChoiceModel(ABC):
             print("-"*50)
             print("WARNING: Convergence was not reached during estimation. "
                   "The given estimates may not be reliable")
+            if hasattr(self, "gtol_res"):
+                print("gtol:", self.gtol)
+                print("Final gradient norm:", self.gtol_res)
             print('*'*50)
         print("Estimation time= {:.1f} seconds".format(self.estim_time_sec))
         print("-"*75)

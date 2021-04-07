@@ -2,7 +2,6 @@ from xlogitprit import MixedLogit
 import numpy as np
 import pandas as pd
 import time
-import matplotlib.pyplot as plt
 
 df = pd.read_csv("examples_prit/Final_RT_Dataset_weights_corrected.csv")
 

@@ -1,3 +1,6 @@
+  """run using python -m examples_prit.example3.py"
+  """
+
 from xlogitprit import MixedLogit
 import numpy as np
 import pandas as pd
