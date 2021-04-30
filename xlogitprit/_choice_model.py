@@ -113,8 +113,8 @@ class ChoiceModel(ABC):
         # convert hess inverse for L-BFGS-B optimisation method
         try:
             self.stderr = np.sqrt(np.diag(optimization_res['hess_inv']))
+            temp = np.sqrt(np.diag(self.Hinv))
         except Exception:
-            print('in the exception')
             if hasattr(optimization_res, 'hess_inv'):
                 if (isinstance(optimization_res['hess_inv'], sc.optimize.lbfgsb.LbfgsInvHessProduct)):
                     hess = optimization_res['hess_inv'].todense()
@@ -186,8 +186,8 @@ class ChoiceModel(ABC):
 
         if self.fit_intercept:
             # adjust variables to allow intercept parameters
-            self.isvars = np.insert(np.array(self.isvars, dtype="<U16"), 0, '_inter')
-            self.varnames = np.insert(np.array(self.varnames, dtype="<U16"), 0, '_inter')
+            self.isvars = np.insert(np.array(self.isvars, dtype="<U64"), 0, '_inter')
+            self.varnames = np.insert(np.array(self.varnames, dtype="<U64"), 0, '_inter')
             self.initialData = np.hstack((np.ones(J*N)[:, None], self.initialData))
             X = np.hstack((np.ones(J*N)[:, None], X))
             self.fxidx = np.insert(np.array(self.fxidx, dtype="bool_"), 0, np.repeat(True, J-1))
@@ -370,6 +370,13 @@ class ChoiceModel(ABC):
                 print("Final gradient norm:", self.gtol_res)
             print('*'*50)
         print("Estimation time= {:.1f} seconds".format(self.estim_time_sec))
+
+        if hasattr(self, 'pred_prob'):
+            print("Frequencies of alternatives: observed choice")
+            print(self.obs_prob)
+            print("Frequencies of alternatives: predicted choice")
+            print(self.pred_prob)
+
         print("-"*75)
         print("{:19} {:>13} {:>13} {:>13} {:>13}"
               .format("Coefficient", "Estimate", "Std.Err.", "z-val", "P>|z|"))
@@ -395,3 +402,14 @@ class ChoiceModel(ABC):
         print("Log-Likelihood= {:.3f}".format(self.loglikelihood))
         print("AIC= {:.3f}".format(self.aic))
         print("BIC= {:.3f}".format(self.bic))
+
+    def corr(self):
+        print(self.corr_mat)
+
+    # def fitted(self, type="parameters"):
+    #     print('draws', self.draws.shape)
+    #     print('drawstrans', self.drawstrans)
+    #     if type == "parameters":
+    #         return
+    #     return
+

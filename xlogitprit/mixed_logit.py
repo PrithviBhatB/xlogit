@@ -12,7 +12,6 @@ from ._device import device as dev
 import numpy as np
 import itertools
 import warnings
-import numdifftools as nd
 
 """
 Notations
@@ -326,13 +325,18 @@ class MixedLogit(ChoiceModel):
 
         # Generate draws
         draws, drawstrans = self._generate_draws(self.N, R, halton)  # (N,Kr,R)
+
+        # save draws for use in summary
+        self.draws = draws
+        self.drawstrans = drawstrans
+
         # 2x Kftrans - mean and lambda, 3x Krtrans - mean, s.d., lambda
         # Kchol, Kbw - relate to random variables, non-transformed
         # Kchol - cholesky matrix, Kbw the s.d. for random vars
         n_coeff = self.Kf + self.Kr + self.Kchol + self.Kbw + 2*self.Kftrans +\
             3*self.Krtrans
         if init_coeff is None:
-            betas = np.repeat(.1, n_coeff)
+            betas = np.repeat(.0, n_coeff)
         else:
             betas = init_coeff
             if len(init_coeff) != n_coeff:
@@ -501,6 +505,17 @@ class MixedLogit(ChoiceModel):
                           i+self.correlationLength] = \
                 Br_w[i]
         chol_mat = chol_mat_temp
+        omega = np.matmul(chol_mat, np.transpose(chol_mat))
+        corr_mat = np.zeros_like(chol_mat)
+        standard_devs = np.sqrt(np.diag(omega))
+        K = len(standard_devs)
+        for i in range(K):
+            for j in range(K):
+                corr_mat[i, j] = omega[i, j] / (standard_devs[i] * standard_devs[j])
+        self.corr_mat = corr_mat
+        # print('chol_mat', chol_mat)
+        # print('omega', np.matmul(chol_mat, np.transpose(chol_mat)))
+        # print('cor_mat', corr_mat)
         # Creating random coeffs using Br_b, cholesky matrix and random draws
         # Estimating the linear utility specification (U = sum of Xb)
         V = np.zeros((self.N, self.P, self.J, self.n_draws))
@@ -518,6 +533,7 @@ class MixedLogit(ChoiceModel):
             V += XBf[:, :, :, None]*self.S[:, :, :, None]
         if self.Kr != 0:
             Br = Br_b[None, :, None] + np.matmul(chol_mat, draws)
+            
             Br = self._apply_distribution(Br, self.rvdist)
             XBr = np.einsum('npjk, nkr -> npjr', Xr, Br, dtype=np.float64)  # (N, P, J, R)
             V += XBr*self.S[:, :, :, None]
@@ -566,6 +582,10 @@ class MixedLogit(ChoiceModel):
         # temp_p = np.mean(np.mean(np.mean(p, axis=0), axis=0), axis=1)
 
         p = p*panel_info[:, :, None, None]
+        # save predicted and observed probabilities to display in summary
+        self.pred_prob = np.mean(np.mean(np.mean(p, axis=3), axis=1), axis=0)
+        self.obs_prob = np.mean(np.mean(np.mean(y, axis=3), axis=1), axis=0)
+    
         # Joint probability estimation for panels data
         pch = np.sum(y*p, axis=2, dtype=np.float64) # (N, P, R)
         pch = self._prob_product_across_panels(pch, panel_info)
@@ -666,20 +686,19 @@ class MixedLogit(ChoiceModel):
         # weighted average of the gradient when panels data is used
        
         # Hessian estimation
-        # if self.hess:
-        # H = g.T.dot(g)
-        # H[np.isnan(H)] = 1e-30  # TODO: why nan!!
-        # H[np.isposinf(H)] = 1e+30
-        # H[np.isneginf(H)] = -1e+30
+        if self.hess:
+            H = g.T.dot(g)
+            H[np.isnan(H)] = 1e-30  # TODO: why nan!!
+            H[np.isposinf(H)] = 1e+30
+            H[np.isneginf(H)] = -1e+30
 
-        # H[H > 1e+30] = 1e+30
-        # H[H < -1e+30] = -1e+30
-        # try:
-        #     Hinv = np.lingalg.inv(H)
-        # except Exception:
-        # Hinv = np.linalg.pinv(H)
-        # self.Hinv = Hinv
-
+            H[H > 1e+30] = 1e+30
+            H[H < -1e+30] = -1e+30
+            try:
+                Hinv = np.lingalg.inv(H)
+            except Exception:
+                Hinv = np.linalg.pinv(H)
+            self.Hinv = Hinv
 
         self.total_fun_eval += 1
 
@@ -695,14 +714,14 @@ class MixedLogit(ChoiceModel):
 
         # log-lik
         self.gtol_res = np.linalg.norm(g, ord=np.inf)
-        # print('norm', np.linalg.norm(g, ord=np.inf)) #  useful debugging gtol
+        # print('norm', np.linalg.norm(g, ord=np.inf))  #  useful debugging gtol
         result = (-loglik)
         if self.grad:
-            # if self.hess:
-            #     # self.Hinv = Hinv
-            #     result = (-loglik, -g, -Hinv)
-            # else:
-            result = (-loglik, -g)
+            if self.hess:
+                self.Hinv = Hinv
+                result = (-loglik, -g, -Hinv)
+            else:
+                result = (-loglik, -g)
 
         return result
 

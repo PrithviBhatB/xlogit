@@ -3,7 +3,7 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setuptools.setup(name='xlogitprit',
-      version='0.1.1',
+      version='0.1.2',
       description='A Python package for GPU-accelerated estimation of mixed logit models.',
       long_description = long_description,
       long_description_content_type="text/markdown",
