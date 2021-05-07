@@ -404,12 +404,44 @@ class ChoiceModel(ABC):
         print("BIC= {:.3f}".format(self.bic))
 
     def corr(self):
-        print(self.corr_mat)
+        corr_varnames = [self.randvars[pos] for pos in self.correlationpos]
+        K = len(corr_varnames) + 1 # + 1 for coeff names row/col
+        str_mat = np.array([])
+        # top row of coef names
+        str_mat = np.append(str_mat, np.array([''] + corr_varnames))
+        self.corr_mat = np.round(self.corr_mat, 8)
+        fmt = "{:11}"
+        print("correlation matrix")
+        for ii, row in enumerate(self.corr_mat):
+            str_mat = np.append(str_mat, corr_varnames[ii])
+            str_mat = np.append(str_mat, np.array(row))
+        str_mat = str_mat.reshape((K, K))
+        for row in str_mat:
+            for el in row:
+                print(fmt.format(el), end='  ')
+            print('')
 
-    # def fitted(self, type="parameters"):
-    #     print('draws', self.draws.shape)
-    #     print('drawstrans', self.drawstrans)
-    #     if type == "parameters":
-    #         return
-    #     return
+    def cov(self):
+        corr_varnames = [self.randvars[pos] for pos in self.correlationpos]
+        K = len(corr_varnames) + 1 # + 1 for coeff names row/col
+        str_mat = np.array([])
+        # top row of coef names
+        str_mat = np.append(str_mat, np.array([''] + corr_varnames))
+        self.omega = np.round(self.omega, 8)
+        fmt = "{:11}"
+        print("covariance matrix")
+        for ii, row in enumerate(self.omega):
+            str_mat = np.append(str_mat, corr_varnames[ii])
+            str_mat = np.append(str_mat, np.array(row))
+        str_mat = str_mat.reshape((K, K))
+        for row in str_mat:
+            for el in row:
+                print(fmt.format(el), end='  ')
+            print('')
+
+    def fitted(self, type="parameters"):
+        if type == "parameters":
+            if hasattr(self, 'pch2_res'):
+                return self.pch2_res
+        return
 

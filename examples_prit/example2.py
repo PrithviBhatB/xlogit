@@ -25,7 +25,7 @@ model.fit(X, y,
           # isvars=['pf'],
           # transformation="boxcox",
         #   transvars=['pf', 'cl', 'loc'],
-          correlation=True,
+          # correlation=True,
           # weights=np.ones(361),
           # ids=choice_id,
           panels=df.id.values,
@@ -34,11 +34,14 @@ model.fit(X, y,
           # hess=False,
           # ftol=1e-5,
           # gtol=1e-3,
-          halton=True,
+          halton=False,
           # method='L-BFGS-B',
           # maxiter=100,
-          n_draws=400,
+          n_draws=100,
           # verbose=False
           )
 model.summary()
 model.corr()
+model.cov()
+indpar = model.fitted()
+print('indpar', indpar)

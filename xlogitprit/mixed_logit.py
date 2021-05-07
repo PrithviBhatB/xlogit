@@ -336,7 +336,7 @@ class MixedLogit(ChoiceModel):
         n_coeff = self.Kf + self.Kr + self.Kchol + self.Kbw + 2*self.Kftrans +\
             3*self.Krtrans
         if init_coeff is None:
-            betas = np.repeat(.0, n_coeff)
+            betas = np.repeat(.1, n_coeff)
         else:
             betas = init_coeff
             if len(init_coeff) != n_coeff:
@@ -512,6 +512,7 @@ class MixedLogit(ChoiceModel):
         for i in range(K):
             for j in range(K):
                 corr_mat[i, j] = omega[i, j] / (standard_devs[i] * standard_devs[j])
+        self.omega = omega
         self.corr_mat = corr_mat
         # print('chol_mat', chol_mat)
         # print('omega', np.matmul(chol_mat, np.transpose(chol_mat)))
@@ -533,9 +534,10 @@ class MixedLogit(ChoiceModel):
             V += XBf[:, :, :, None]*self.S[:, :, :, None]
         if self.Kr != 0:
             Br = Br_b[None, :, None] + np.matmul(chol_mat, draws)
-            
+            # print('Br', Br[0, 0, :])
             Br = self._apply_distribution(Br, self.rvdist)
             XBr = np.einsum('npjk, nkr -> npjr', Xr, Br, dtype=np.float64)  # (N, P, J, R)
+            # print('XBr', XBr[0, 0, 0, :])
             V += XBr*self.S[:, :, :, None]
         #  transformation
         #  transformations for variables with fixed coeffs
@@ -591,6 +593,27 @@ class MixedLogit(ChoiceModel):
         pch = self._prob_product_across_panels(pch, panel_info)
         # Thresholds to avoid divide by zero warnings
         pch[pch == 0] = min_comp_val
+
+        # calculate fitted parameter values
+        pch2 = np.divide(pch, np.sum(pch, axis=1)[:, None]) # pch/rowsum(pch)
+
+        pch2 = pch2.flatten()
+        temp_br = np.zeros((36100, 5))
+        for i in range(self.N):
+            for k in range(self.Kr):
+                temp_br[(i*self.n_draws):((i+1)*self.n_draws), k] = Br[i, k, :]
+                    
+        Br = temp_br
+
+        pch2 = np.multiply(pch2[:, None], Br)
+        pch2_res = np.zeros((self.N, self.Kr))
+        for i in range(self.N):
+            pch2_res[i, :] = np.sum(pch2[i*self.n_draws:(i+1)*self.n_draws, :], axis=0)
+
+        self.pch2_res = pch2_res
+        # save ids if panel
+
+
         # Log-likelihood
         lik = pch.mean(axis=1, dtype=np.float64)  # (N,)
         loglik = dev.np.log(lik)
