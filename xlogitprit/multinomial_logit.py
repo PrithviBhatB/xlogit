@@ -138,7 +138,8 @@ class MultinomialLogit(ChoiceModel):
         self.initialData = initialData
         self.grad = grad
         self.hess = hess
-
+        self.gtol = gtol
+        self.ftol = ftol
         self.method = method
 
         jac = True if self.grad else False
@@ -179,6 +180,9 @@ class MultinomialLogit(ChoiceModel):
 
         X = X.astype('float64')
         y = y.astype('float64')
+        
+        self.obs_prob = np.mean(y, axis=0)
+
         betas = betas.astype('float64')
 
         # Call optimization routine
@@ -235,6 +239,9 @@ class MultinomialLogit(ChoiceModel):
         if avail is not None:
             eXB = eXB*avail
         p = eXB/np.sum(eXB, axis=1, keepdims=True)  # (N,J)
+
+        self.pred_prob = np.mean(p, axis=0)
+
         return p, Xtrans_lmda
 
     def _loglik_and_gradient(self, betas, X, y, weights, avail):
@@ -287,6 +294,8 @@ class MultinomialLogit(ChoiceModel):
         #     self.Hinv = Hinv
 
         grad = np.sum(grad, axis=0, dtype=np.float64)
+        self.gtol_res = np.linalg.norm(grad, ord=np.inf)
+
         result = (-loglik)
         # print('norm', np.linalg.norm(grad, ord=np.inf)) #  this is useful debug gtol
 

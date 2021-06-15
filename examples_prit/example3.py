@@ -19,12 +19,12 @@ model.fit(X, y, varnames=varnames,
           n_draws=600,
           maxiter=2000,
           # grad=False,
-          # hess=False,
+          hess=False,
           halton=True,
           # init_coeff=np.repeat(0.2, 5),
           correlation=True,
           # weights=np.ones(1182),
           # method="L-BFGS-B",
-        #   fit_intercept=True
+          fit_intercept=True
           )
 model.summary()

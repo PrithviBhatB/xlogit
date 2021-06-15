@@ -16,7 +16,12 @@ y = df['choice'].values
 model.fit(X, y, ids=df['id'], varnames=varnames,
           alts=df['alt'], randvars={'meals': 'n', 'petfr': 'n', 'emipp': 'n'},
         #   transvars=['x4', 'x5'],
-          method="L-BFGS-B",
+          # method="L-BFGS-B",
+          grad=False,
+          hess=False,
         correlation=True
         )
 model.summary()
+model.corr()
+model.cov()
+model.stddev()

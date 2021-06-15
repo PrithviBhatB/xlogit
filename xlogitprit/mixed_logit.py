@@ -4,7 +4,7 @@ Implements all the logic for mixed logit models
 # pylint: disable=invalid-name
 from .boxcox_functions import boxcox_param_deriv_mixed, \
                               boxcox_transformation_mixed
-import scipy.stats
+import scipy.stats as ss
 from scipy.optimize import minimize
 # from scipy.optimize import basinhopping
 from ._choice_model import ChoiceModel
@@ -287,7 +287,7 @@ class MixedLogit(ChoiceModel):
 
         self.grad = grad
         self.hess = hess
-        self.method = method
+        self.method = method.lower()
 
         jac = True if self.grad else False
 
@@ -325,7 +325,9 @@ class MixedLogit(ChoiceModel):
 
         # Generate draws
         draws, drawstrans = self._generate_draws(self.N, R, halton)  # (N,Kr,R)
-
+        # test_halton = self._get_halton_draws(self.N, n_draws,
+        #                                      np.sum(self.rvidx))
+        # self.test_copula = ss.norm.ppf(test_halton)
         # save draws for use in summary
         self.draws = draws
         self.drawstrans = drawstrans
@@ -423,7 +425,7 @@ class MixedLogit(ChoiceModel):
             H = np.linalg.inv(H)
             optimizat_res['hess_inv'] = H
 
-        self._post_fit(optimizat_res, Xnames, N, verbose) # TODO: IF SELF
+        self._post_fit(optimizat_res, Xnames, N, verbose)
 
     def _compute_probabilities(self, betas, X, panel_info, draws, drawstrans,
                                avail):
@@ -466,7 +468,7 @@ class MixedLogit(ChoiceModel):
         # random beta means (Br_b)
         # for both non-transformed and transformed variables
         # and random beta cholesky factors (chol)
-        
+        # print('betas', betas)
         if dev.using_gpu:
             betas = dev.to_gpu(betas)
 
@@ -476,6 +478,9 @@ class MixedLogit(ChoiceModel):
         # number of parameters for each corresponding segment
         iterations = [self.Kf, self.Kr, self.Kchol, self.Kbw, self.Kftrans,
                       self.Kftrans, self.Krtrans, self.Krtrans, self.Krtrans]
+        
+        # print('self.test_copula', self.test_copula)
+        
         i = 0
         for count, iteration in enumerate(iterations):
             prev_index = i
@@ -507,16 +512,30 @@ class MixedLogit(ChoiceModel):
         chol_mat = chol_mat_temp
         omega = np.matmul(chol_mat, np.transpose(chol_mat))
         corr_mat = np.zeros_like(chol_mat)
+
+        # TODO: TESTING COPULA!
+        # chol_copula = np.matmul(chol_mat, self.test_copula)
+        # chol_unif = ss.norm.cdf(chol_copula)
+        # coeff_names = [x for x in self.varnames if x in self.randvars]
+        # distributions = [self.randvarsdict[name] for name in coeff_names]
+        # index = index if (index is not None) else self.rvdist
+        # copula_beta_randoms = np.zeros_like(chol_unif)
+        # for k, dist in enumerate(self.rvdist):
+        #     if dist == 'n':
+        #         copula_beta_randoms[:, k, :] = ss.norm.ppf(chol_unif[:, k, :])
+            # if dist == 'ln':
+        # copula_beta_randoms[np.isneginf(copula_beta_randoms)] = -max_comp_val
+        # copula_beta_randoms[np.isposinf(copula_beta_randoms)] = max_comp_val
+
         standard_devs = np.sqrt(np.diag(omega))
         K = len(standard_devs)
         for i in range(K):
             for j in range(K):
                 corr_mat[i, j] = omega[i, j] / (standard_devs[i] * standard_devs[j])
         self.omega = omega
+        self.stdevs = standard_devs
         self.corr_mat = corr_mat
-        # print('chol_mat', chol_mat)
-        # print('omega', np.matmul(chol_mat, np.transpose(chol_mat)))
-        # print('cor_mat', corr_mat)
+
         # Creating random coeffs using Br_b, cholesky matrix and random draws
         # Estimating the linear utility specification (U = sum of Xb)
         V = np.zeros((self.N, self.P, self.J, self.n_draws))
@@ -534,10 +553,13 @@ class MixedLogit(ChoiceModel):
             V += XBf[:, :, :, None]*self.S[:, :, :, None]
         if self.Kr != 0:
             Br = Br_b[None, :, None] + np.matmul(chol_mat, draws)
-            # print('Br', Br[0, 0, :])
             Br = self._apply_distribution(Br, self.rvdist)
+            # TODO: currently assumes all normal
+            # Br = np.zeros((self.N, self.Kr, self.n_draws))
+            # for k in range(self.Kr):
+            #     Br[:, k, :] = Br_b[k] + self.stdevs[k]*copula_beta_randoms[:, k, :]
+            
             XBr = np.einsum('npjk, nkr -> npjr', Xr, Br, dtype=np.float64)  # (N, P, J, R)
-            # print('XBr', XBr[0, 0, 0, :])
             V += XBr*self.S[:, :, :, None]
         #  transformation
         #  transformations for variables with fixed coeffs
@@ -562,7 +584,6 @@ class MixedLogit(ChoiceModel):
             Xrtrans_lmda[np.isneginf(Xrtrans_lmda)] = -1e+30
 
             Xbr_trans = np.einsum('npjk, nkr -> npjr', Xrtrans_lmda, Brtrans, dtype=np.float64)  # (N, P, J, R)
-            # Xbr_trans[np.isnan(Xbr_trans)] = 1e-30 # TODO
             # combining utilities
             V += Xbr_trans  # (N, P, J, R)
 
@@ -598,7 +619,7 @@ class MixedLogit(ChoiceModel):
         pch2 = np.divide(pch, np.sum(pch, axis=1)[:, None]) # pch/rowsum(pch)
 
         pch2 = pch2.flatten()
-        temp_br = np.zeros((36100, 5))
+        temp_br = np.zeros((self.N*self.n_draws, self.Kr))
         for i in range(self.N):
             for k in range(self.Kr):
                 temp_br[(i*self.n_draws):((i+1)*self.n_draws), k] = Br[i, k, :]
@@ -612,7 +633,6 @@ class MixedLogit(ChoiceModel):
 
         self.pch2_res = pch2_res
         # save ids if panel
-
 
         # Log-likelihood
         lik = pch.mean(axis=1, dtype=np.float64)  # (N,)
@@ -638,15 +658,16 @@ class MixedLogit(ChoiceModel):
         # for s.d.: gr_b = (Obs. prob. minus pred. prob.)  * obs. var * rand draw
         # if random coef. is lognormally dist:
         # gr_b = (obs. prob minus pred. prob.) * obs. var. * rand draw * der(R.V.)
+
         if self.Kr != 0:
             der = self._compute_derivatives(betas, draws, chol_mat=chol_mat)
             gr_b = np.einsum('npjr, npjk -> nkr', ymp, Xr, dtype=np.float64)*der  # (N, Kr, R)
             # For correlation parameters
             # for s.d.: gr_w = (Obs prob. minus predicted probability) * obs. var * random draw
-            draws_tril_idx = np.array([self.correlationpos[j] 
+            draws_tril_idx = np.array([j
                                       for i in range(self.correlationLength)
                                        for j in range(i+1)])  # varnames pos.
-            X_tril_idx = np.array([self.correlationpos[i]
+            X_tril_idx = np.array([i
                                    for i in range(self.correlationLength)
                                    for j in range(i+1)])
             # Find the s.d. for random variables that are not correlated
@@ -707,11 +728,11 @@ class MixedLogit(ChoiceModel):
                     else np.concatenate((grtrans_b, grtrans_w, grtrans_lmda), axis=1)
 
         # weighted average of the gradient when panels data is used
-       
+
         # Hessian estimation
         if self.hess:
             H = g.T.dot(g)
-            H[np.isnan(H)] = 1e-30  # TODO: why nan!!
+            H[np.isnan(H)] = 1e-30  # TODO: why nans
             H[np.isposinf(H)] = 1e+30
             H[np.isneginf(H)] = -1e+30
 
@@ -737,6 +758,7 @@ class MixedLogit(ChoiceModel):
 
         # log-lik
         self.gtol_res = np.linalg.norm(g, ord=np.inf)
+        # print('grad', g)
         # print('norm', np.linalg.norm(g, ord=np.inf))  #  useful debugging gtol
         result = (-loglik)
         if self.grad:
@@ -837,12 +859,12 @@ class MixedLogit(ChoiceModel):
             # Compute: betas = mean + sd*draws
             # TODO: Consider randtrans?
             betas_random = br_mean[None, :, None] + np.matmul(chol_mat, draws)
-
             betas_random = self._apply_distribution(betas_random, index,
                                                     draws=draws)
+
         return betas_fixed, betas_random
 
-    def _generate_draws(self, sample_size, n_draws, halton=True):
+    def _generate_draws(self, sample_size, n_draws, halton=True, chol_mat=None):
         """Generate draws based on the given mixing distributions."""
         draws = drawstrans = []
         if halton:
@@ -863,7 +885,7 @@ class MixedLogit(ChoiceModel):
         self.rvdist = [x for x in self.rvdist if x is not False]
         for k, dist in enumerate(self.rvdist):
             if dist in ['n', 'ln', 'tn']:  # Normal based
-                draws[:, k, :] = scipy.stats.norm.ppf(draws[:, k, :])
+                draws[:, k, :] = ss.norm.ppf(draws[:, k, :])
             elif dist == 't':  # Triangular
                 draws_k = draws[:, k, :]
                 draws[:, k, :] = (np.sqrt(2*draws_k) - 1)*(draws_k <= .5) +\
@@ -871,10 +893,11 @@ class MixedLogit(ChoiceModel):
             elif dist == 'u':  # Uniform
                 draws[:, k, :] = 2*draws[:, k, :] - 1
 
+
         self.rvtransdist = [x for x in self.rvtransdist if x is not False]  # remove False to allow better enumeration
         for k, dist in enumerate(self.rvtransdist):
             if dist in ['n', 'ln', 'tn']:  # Normal based
-                drawstrans[:, k, :] = scipy.stats.norm.ppf(drawstrans[:, k, :])
+                drawstrans[:, k, :] = ss.norm.ppf(drawstrans[:, k, :])
             elif dist == 't':  # Triangular
                 draws_k = drawstrans[:, k, :]
                 drawstrans[:, k, :] = (np.sqrt(2*draws_k) - 1)*(draws_k <= .5) +\

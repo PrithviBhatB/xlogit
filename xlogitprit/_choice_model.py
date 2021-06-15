@@ -2,7 +2,7 @@
 # pylint: disable=invalid-name
 
 import numpy as np
-from scipy.stats import t
+from scipy.stats import t, norm
 import scipy as sc
 from time import time
 from abc import ABC, abstractmethod
@@ -111,21 +111,27 @@ class ChoiceModel(ABC):
         self.convergence = optimization_res['success']
         self.coeff_ = optimization_res['x']
         # convert hess inverse for L-BFGS-B optimisation method
-        try:
-            self.stderr = np.sqrt(np.diag(optimization_res['hess_inv']))
-            temp = np.sqrt(np.diag(self.Hinv))
-        except Exception:
-            if hasattr(optimization_res, 'hess_inv'):
-                if (isinstance(optimization_res['hess_inv'], sc.optimize.lbfgsb.LbfgsInvHessProduct)):
-                    hess = optimization_res['hess_inv'].todense()
-                    self.stderr = np.sqrt(np.diag(np.array(hess)))
-                else:
-                    self.stderr = np.zeros_like(self.coeff_)
-            if hasattr(self, 'Hinv'):
-                self.stderr = np.sqrt(np.diag(np.array(self.Hinv)))
+
+        self.stderr = np.zeros_like(self.coeff_)
+        std_err_estimated = False
+        if hasattr(self, 'Hinv'):
+            self.stderr = np.sqrt(np.diag(np.array(self.Hinv)))
+            std_err_estimated = False if np.isnan(self.stderr).any else True
+
+        if not std_err_estimated:
+            if self.method == "bfgs":
+                self.stderr = np.sqrt(np.diag(optimization_res['hess_inv']))
+            if self.method == "l-bfgs-b":
+                hess = optimization_res['hess_inv'].todense()
+                self.stderr = np.sqrt(np.diag(np.array(hess)))
+        
         lambda_mask = [1 if "lambda" in x else 0 for x in coeff_names]
         self.zvalues = np.nan_to_num((self.coeff_ - lambda_mask)/self.stderr)
-        self.pvalues = 2*t.pdf(-np.abs(self.zvalues), df=sample_size)
+        # set maximum (and minimum) limits to zvalues
+        self.zvalues = [z if z < 1e+5 else 1e+5 for z in self.zvalues]
+        self.zvalues = [z if z > -1e+5 else -1e+5 for z in self.zvalues]
+        self.pvalues_old = 2*t.pdf(-np.abs(self.zvalues), df=sample_size)
+        self.pvalues = 2*(1 - t.cdf(np.abs(self.zvalues), df=sample_size))
         self.loglikelihood = -optimization_res['fun']
         self.coeff_names = coeff_names
         self.total_iter = optimization_res['nit']
@@ -213,11 +219,14 @@ class ChoiceModel(ABC):
         # if correlation = True correlation pos is randpos, if list get correct pos
         self.correlationpos = []
         if randvars:
-            self.correlationpos = [self.randvars.index(i) for i in randvars] #  Position of correlated variables within randvars
+            self.correlationpos = [self.varnames.tolist().index(x) for x in self.varnames if x in self.randvars]  #  Position of correlated variables within randvars
         if (isinstance(self.correlation, list)):
-            self.correlationpos = [self.randvars.index(i) for i in self.correlation]
-            self.uncorrelatedpos = [self.randvars.index(i) for i in
-                                    self.randvars if i not in self.correlation]
+            self.correlationpos = [self.varnames.tolist().index(x) for x in
+                                   self.varnames if x in self.correlation]
+            self.uncorrelatedpos = [self.varnames.tolist().index(x) for x in
+                                   self.varnames if x not in self.correlation]
+            print('self.correlationpos', self.correlationpos)
+            print('uncorrelatedpos', self.uncorrelatedpos)
         self.Kf = sum(self.fxidx)  # set number of fixed coeffs from idx
         self.Kr = len(randpos)  # Number of random coefficients
         self.Kftrans = len(fixedtranspos)  # Number of fixed coefficients of bc transformed vars
@@ -290,19 +299,19 @@ class ChoiceModel(ABC):
         asvars_names = [x for x in asvars if (x not in self.randvars) and
                                              (x not in fixedtransvars) and
                                              (x not in randtransvars)]
-        chol = ["chol." + self.randvars[self.correlationpos[i]] + "." +
-                self.randvars[self.correlationpos[j]] for i
+        chol = ["chol." + self.varnames[self.correlationpos[i]] + "." +
+                self.varnames[self.correlationpos[j]] for i
                 in range(self.correlationLength) for j in range(i+1)]
         br_w_names = []
         # three cases for corr. varnames: no corr, corr list, corr Bool (All)
         if (self.correlation is not True and not isinstance(self.correlation, list)):
             if(hasattr(self, "rvidx")):  # avoid errors with multinomial logit
-                br_w_names = np.char.add("sd.", self.randvars)
+                br_w_names = np.char.add("sd.", randvars)
         if (isinstance(self.correlation, list)):  # if not all r.v.s correlated
             sd_uncorrelated_pos = [self.varnames.tolist().index(x)
                                    for x in self.varnames
                                    if x not in self.correlation and
-                                   x in self.randvars]
+                                   x in randvars]
             br_w_names = np.char.add("sd.", self.varnames[sd_uncorrelated_pos])
         sd_rand_trans = np.char.add("sd.", self.varnames[randtranspos])
         names = np.concatenate((intercept_names, names, asvars_names, randvars,
@@ -404,14 +413,17 @@ class ChoiceModel(ABC):
         print("BIC= {:.3f}".format(self.bic))
 
     def corr(self):
-        corr_varnames = [self.randvars[pos] for pos in self.correlationpos]
-        K = len(corr_varnames) + 1 # + 1 for coeff names row/col
+        corr_varnames = [self.varnames[pos] for pos in self.correlationpos]
+        K = len(corr_varnames) + 1  # + 1 for coeff names row/col
         str_mat = np.array([])
         # top row of coef names
         str_mat = np.append(str_mat, np.array([''] + corr_varnames))
-        self.corr_mat = np.round(self.corr_mat, 8)
+        self.corr_mat = np.round(self.corr_mat[0:len(corr_varnames),
+                                               0:len(corr_varnames)], 8)
         fmt = "{:11}"
         print("correlation matrix")
+        print('self.corr_mat', self.corr_mat)
+        print('corr_varnames', corr_varnames)
         for ii, row in enumerate(self.corr_mat):
             str_mat = np.append(str_mat, corr_varnames[ii])
             str_mat = np.append(str_mat, np.array(row))
@@ -422,12 +434,12 @@ class ChoiceModel(ABC):
             print('')
 
     def cov(self):
-        corr_varnames = [self.randvars[pos] for pos in self.correlationpos]
+        corr_varnames = [self.varnames[pos] for pos in self.correlationpos]
         K = len(corr_varnames) + 1 # + 1 for coeff names row/col
         str_mat = np.array([])
         # top row of coef names
         str_mat = np.append(str_mat, np.array([''] + corr_varnames))
-        self.omega = np.round(self.omega, 8)
+        self.omega = np.round(self.omega[0:len(corr_varnames), 0:len(corr_varnames)], 8)
         fmt = "{:11}"
         print("covariance matrix")
         for ii, row in enumerate(self.omega):
@@ -445,3 +457,40 @@ class ChoiceModel(ABC):
                 return self.pch2_res
         return
 
+    def stddev(self):
+        # 
+        fmt = "{:11}"
+        coeff_names = [x for x in self.varnames if x in self.randvars]
+        diags = np.round(np.sqrt(np.diag(self.omega)), 8)
+        for name in coeff_names:
+            print('name', name, 'type', type(name))
+
+        distributions = [self.randvarsdict[name] for name in coeff_names]
+        print('distributions', distributions)
+        print('Standard Deviations')
+        stdevs = np.zeros(len(diags))
+
+        for ii, val in enumerate(diags):
+            dist = distributions[ii]
+            if dist == 'n':
+                stdev = val 
+            if dist == 'ln':
+                pass
+                # stdev =  # var = exp(2m + s)[exp(s) - 1]
+            # if dist == 'tn':
+            #     stdev = 
+            if dist == 'u':
+                pass
+                # stdev =  # var
+            if dist == 't':
+                pass
+                # stdev = 
+            # stdevs[i] = stdev
+
+        for name in coeff_names:
+            print(fmt.format(name), end='  ')
+        print('')
+        for std in diags:
+            print(fmt.format(std), end='  ')
+        print('')
+        pass

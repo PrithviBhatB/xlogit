@@ -1,5 +1,5 @@
-  """run using python -m examples_prit.example3.py"
-  """
+"""run using python -m examples_prit.example3.py"
+"""
 
 from xlogitprit import MixedLogit
 import numpy as np
@@ -25,8 +25,8 @@ model.fit(
   randvars={'catch': 'n'},
   # init_coeff=np.repeat(0, 11),
   # gtol=1e-4,
-  # grad=False,
-  # hess=False,
+  grad=False,
+  hess=False,
   # tol=1e-4,
   # method="L-BFGS-B",
   fit_intercept=True,
